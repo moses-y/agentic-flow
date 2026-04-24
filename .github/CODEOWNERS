@@ -1,0 +1,22 @@
+# CODEOWNERS — Automatically assigns reviewers to pull requests.
+# Each line is a file pattern followed by one or more owners.
+# Order matters: later patterns take precedence over earlier ones.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+
+# Default owner for everything
+*  ruv@ruv.net
+
+agentic-flow/                     ruv@ruv.net
+agentic-flow/wasm/reasoningbank/  ruv@ruv.net
+benchmarks/                       ruv@ruv.net
+packages/agentdb/                 ruv@ruv.net
+packages/agentdb/benchmarks/      ruv@ruv.net
+packages/agentic-jujutsu/         ruv@ruv.net
+reasoningbank/                    ruv@ruv.net
+tests/                            ruv@ruv.net
+.github/workflows/                ruv@ruv.net
+benchmark-results/                ruv@ruv.net
+docker/                           ruv@ruv.net
+docs/                             ruv@ruv.net
+scripts/                          ruv@ruv.net
