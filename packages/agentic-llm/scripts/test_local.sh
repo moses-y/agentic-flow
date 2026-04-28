@@ -28,14 +28,14 @@ print("✓ Confidence scoring")
 print("\n✅ Claude SDK integration tests passed!")
 EOF
 
-python3 /tmp/test_claude_sdk.py
+uv run python /tmp/test_claude_sdk.py
 
 echo ""
 echo "📊 Running Before/After Optimization Benchmarks..."
 echo ""
 
 # Run comparison benchmarks
-python3 benchmarks/run_comparison.py --output-dir benchmarks/comparison
+uv run python benchmarks/run_comparison.py --output-dir benchmarks/comparison
 
 echo ""
 echo "✅ All tests complete!"

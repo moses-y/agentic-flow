@@ -135,7 +135,7 @@ npx agentic-flow --provider ollama --model llama3:70b --task "..."
 
 ```bash
 # Install LiteLLM
-pip install litellm[proxy]
+uv add litellm[proxy]
 
 # Start proxy
 litellm --config litellm_config.yaml
