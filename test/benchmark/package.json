@@ -6,7 +6,8 @@
   "scripts": {
     "benchmark:local": "ts-node local-swarm-scalability.ts",
     "benchmark:quick": "ts-node local-swarm-scalability.ts --quick",
-    "test": "npm run benchmark:local"
+    "test": "npm run benchmark:local",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

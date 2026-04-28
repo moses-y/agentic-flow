@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "benchmark": "tsx src/benchmarks/benchmark-runner.ts",
-    "example": "tsx examples/complete-workflow.ts"
+    "example": "tsx examples/complete-workflow.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "agentdb",

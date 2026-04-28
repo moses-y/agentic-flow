@@ -12,7 +12,8 @@
     "bench:quick": "node benchmark.js --iterations=1",
     "bench:full": "node benchmark.js --iterations=5",
     "bench:report": "node scripts/generate-report.js",
-    "bench:clean": "rm -rf results/* reports/*"
+    "bench:clean": "rm -rf results/* reports/*",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "benchmark",

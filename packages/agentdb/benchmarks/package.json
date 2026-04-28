@@ -9,7 +9,8 @@
     "bench:memory": "node --expose-gc --max-old-space-size=8192 -r ts-node/register memory.bench.ts",
     "bench:regression": "ts-node regression-check.ts",
     "bench:watch": "vitest bench",
-    "bench:report": "vitest bench --run --reporter=json --outputFile=benchmark-results.json"
+    "bench:report": "vitest bench --run --reporter=json --outputFile=benchmark-results.json",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {},
   "devDependencies": {

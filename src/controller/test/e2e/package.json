@@ -6,7 +6,8 @@
   "scripts": {
     "test:e2b": "ts-node run_e2b_tests.ts",
     "test:watch": "nodemon --watch '*.ts' --exec 'npm run test:e2b'",
-    "build": "tsc"
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@e2b/code-interpreter": "^0.0.8"

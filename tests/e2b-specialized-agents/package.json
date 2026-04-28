@@ -10,7 +10,8 @@
     "test:ml": "ts-node specialized-agents-test-suite.ts --agent ml-developer",
     "test:template": "ts-node specialized-agents-test-suite.ts --agent base-template-generator",
     "analyze": "ts-node analyze-results.ts",
-    "visualize": "ts-node generate-visualizations.ts"
+    "visualize": "ts-node generate-visualizations.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@types/node": "^20.0.0",
