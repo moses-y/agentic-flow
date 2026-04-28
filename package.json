@@ -83,7 +83,8 @@
     "complexity": "npx complexity-report --format json --output complexity-report.json agentic-flow/src/**/*.ts || echo 'Complexity report generated'",
     "quality:check": "npm run lint && npm run format:check && npm run typecheck:strict && npm run test:coverage",
     "quality:fix": "npm run lint:fix && npm run format",
-    "prepublishOnly": "npm run build || true"
+    "prepublishOnly": "npm run build || true",
+    "dev": "vite"
   },
   "keywords": [
     "ai",

@@ -74,7 +74,8 @@
     "benchmark:profile": "tsx scripts/profile-hot-paths.ts",
     "benchmark:ruvector": "tsx benchmarks/ruvector-benchmark.ts",
     "benchmark:all": "npm run benchmark:attention && npm run benchmark:backends && npm run benchmark:profile && npm run benchmark:ruvector",
-    "build:model": "node scripts/build-model-rvf.mjs"
+    "build:model": "node scripts/build-model-rvf.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "agentdb",

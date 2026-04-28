@@ -6,7 +6,8 @@
   "scripts": {
     "benchmark:swarm": "ts-node swarm-scalability-benchmark.ts",
     "benchmark:quick": "ts-node swarm-scalability-benchmark.ts --quick",
-    "test": "npm run benchmark:swarm"
+    "test": "npm run benchmark:swarm",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@e2b/code-interpreter": "^0.0.8"

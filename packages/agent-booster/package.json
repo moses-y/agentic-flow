@@ -24,7 +24,8 @@
     "test": "node validation/test-published-package.js",
     "test:benchmark": "node benchmarks/run-real-benchmark.js",
     "server": "node dist/server.js",
-    "dev:server": "tsc && node dist/server.js"
+    "dev:server": "tsc && node dist/server.js",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "code-editing",
