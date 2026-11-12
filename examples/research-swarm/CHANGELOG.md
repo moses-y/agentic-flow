@@ -2,6 +2,17 @@
 
 All notable changes to research-swarm will be documented in this file.
 
+## [1.2.4] - 2026-11-08
+
+### Fixed
+- `import('research-swarm')` threw `ERR_MODULE_NOT_FOUND` in a normal install. `lib/permit-platform-adapter.js` imported `../node_modules/agentic-flow/dist/...`, which resolves only when agentic-flow is nested inside research-swarm, but npm hoists the peer. The Supabase federation adapter is now located through agentic-flow's exported `package.json` and loaded lazily in `PermitPlatformAdapter.initialize()`, so the package entry also imports without the peer. A test fails if shipped source imports through a relative `node_modules` path.
+
+## [1.2.3] - 2026-11-08
+
+### Changed
+- The `agentic-flow` peer range is capped: `>=1.9.0` → `>=1.9.0 <4.0.0`, so a future agentic-flow major is not installed unannounced.
+- Lockfile refreshed (minimatch ReDoS fixes). The remaining `npm audit` highs come from `goalie` → `zod` 3, which has no fixed 3.x release.
+
 ## [1.2.2] - 2025-11-04
 
 ### 🐛 Hotfix - CLI Version Display

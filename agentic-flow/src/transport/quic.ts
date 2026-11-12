@@ -1,7 +1,20 @@
 // QUIC Transport Layer for Agentic Flow
-// WebAssembly-based QUIC client/server with connection pooling and stream multiplexing
+//
+// PLACEHOLDER API: QuicClient, QuicServer and QuicTransport do not open UDP
+// sockets or transmit bytes. No native QUIC binding is published for
+// agentic-flow, and wasm/quic is a browser stub without UDP. Probe with
+// isQuicAvailable() / getQuicStatus() (re-exported below); for a transport
+// that moves bytes use loadQuicTransport() from 'agentic-flow/transport/loader'.
 
 import { logger } from '../utils/logger.js';
+import { QUIC_UNAVAILABLE_REASON } from './quic-loader.js';
+
+export {
+  isQuicAvailable,
+  getQuicStatus,
+  QUIC_UNAVAILABLE_REASON,
+  type QuicStatus,
+} from './quic-loader.js';
 
 export interface QuicConfig {
   // Server configuration
@@ -68,7 +81,7 @@ export class QuicClient {
 
   constructor(config: QuicConfig = {}) {
     this.config = {
-      host: config.host || '0.0.0.0',
+      host: config.host || '127.0.0.1',
       port: config.port || 4433,
       certPath: config.certPath || './certs/cert.pem',
       keyPath: config.keyPath || './certs/key.pem',
@@ -106,6 +119,7 @@ export class QuicClient {
 
       // Load WASM module (implementation depends on WASM binding)
       // For now, this is a placeholder for the actual WASM loading
+      logger.warn('agentic-flow/transport/quic is a placeholder; no QUIC packets are sent. ' + QUIC_UNAVAILABLE_REASON);
       this.wasmModule = await this.loadWasmModule();
 
       this.initialized = true;
@@ -332,7 +346,7 @@ export class QuicServer {
 
   constructor(config: QuicConfig = {}) {
     this.config = {
-      host: config.host || '0.0.0.0',
+      host: config.host || '127.0.0.1',
       port: config.port || 4433,
       certPath: config.certPath || './certs/cert.pem',
       keyPath: config.keyPath || './certs/key.pem',
@@ -370,6 +384,7 @@ export class QuicServer {
       });
 
       // Load WASM module
+      logger.warn('agentic-flow/transport/quic is a placeholder; no QUIC packets are sent. ' + QUIC_UNAVAILABLE_REASON);
       this.wasmModule = await this.loadWasmModule();
 
       this.initialized = true;

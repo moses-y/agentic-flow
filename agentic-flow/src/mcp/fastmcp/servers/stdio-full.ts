@@ -1,8 +1,16 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/no-explicit-any -- pre-existing catch(error: any) handlers; outside scope of CWE-78 fix */
 // Full FastMCP server with stdio transport - All 11 claude-flow-sdk tools
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import { assertSlug, resolveAgentDir, resolveWithin } from '../../../utils/path-safety.js';
+import { mcpServerVersion } from '../../../utils/package-version.js';
+
+// Security: All shell-outs use execFileSync with argv arrays (shell: false) to
+// prevent OS command injection via tool parameters (CWE-78). Do NOT reintroduce
+// execSync with template-string interpolation here.
+const NPX_EXEC_OPTS = { shell: false as const };
 
 console.error('🚀 Starting FastMCP Full Server (stdio transport)...');
 console.error('📦 Loading 11 tools: memory (3), swarm (3), agent (5)');
@@ -10,7 +18,7 @@ console.error('📦 Loading 11 tools: memory (3), swarm (3), agent (5)');
 // Create server
 const server = new FastMCP({
   name: 'fastmcp-stdio-full',
-  version: '1.0.0'
+  version: mcpServerVersion()
 });
 
 // Tool 1: Memory Store
@@ -25,15 +33,10 @@ server.addTool({
   }),
   execute: async ({ key, value, namespace, ttl }) => {
     try {
-      const cmd = [
-        'npx claude-flow@alpha memory store',
-        `"${key}"`,
-        `"${value}"`,
-        `--namespace "${namespace}"`,
-        ttl ? `--ttl ${ttl}` : ''
-      ].filter(Boolean).join(' ');
+      const args = ['claude-flow@alpha', 'memory', 'store', key, value, '--namespace', namespace];
+      if (ttl) args.push('--ttl', String(ttl));
 
-      const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+      execFileSync('npx', args, { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
 
       return JSON.stringify({
         success: true,
@@ -60,8 +63,11 @@ server.addTool({
   }),
   execute: async ({ key, namespace }) => {
     try {
-      const cmd = `npx claude-flow@alpha memory retrieve "${key}" --namespace "${namespace}"`;
-      const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+      const result = execFileSync(
+        'npx',
+        ['claude-flow@alpha', 'memory', 'retrieve', key, '--namespace', namespace],
+        { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+      );
 
       return JSON.stringify({
         success: true,
@@ -88,14 +94,11 @@ server.addTool({
   }),
   execute: async ({ pattern, namespace, limit }) => {
     try {
-      const cmd = [
-        'npx claude-flow@alpha memory search',
-        `"${pattern}"`,
-        namespace ? `--namespace "${namespace}"` : '',
-        `--limit ${limit}`
-      ].filter(Boolean).join(' ');
+      const args = ['claude-flow@alpha', 'memory', 'search', pattern];
+      if (namespace) args.push('--namespace', namespace);
+      args.push('--limit', String(limit));
 
-      const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+      const result = execFileSync('npx', args, { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
 
       return JSON.stringify({
         success: true,
@@ -125,8 +128,11 @@ server.addTool({
   }),
   execute: async ({ topology, maxAgents, strategy }) => {
     try {
-      const cmd = `npx claude-flow@alpha swarm init --topology ${topology} --max-agents ${maxAgents} --strategy ${strategy}`;
-      const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+      const result = execFileSync(
+        'npx',
+        ['claude-flow@alpha', 'swarm', 'init', '--topology', topology, '--max-agents', String(maxAgents), '--strategy', strategy],
+        { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+      );
 
       return JSON.stringify({
         success: true,
@@ -156,10 +162,10 @@ server.addTool({
   }),
   execute: async ({ type, capabilities, name }) => {
     try {
-      const capStr = capabilities ? ` --capabilities "${capabilities.join(',')}"` : '';
-      const nameStr = name ? ` --name "${name}"` : '';
-      const cmd = `npx claude-flow@alpha agent spawn --type ${type}${capStr}${nameStr}`;
-      const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+      const args = ['claude-flow@alpha', 'agent', 'spawn', '--type', type];
+      if (capabilities && capabilities.length > 0) args.push('--capabilities', capabilities.join(','));
+      if (name) args.push('--name', name);
+      const result = execFileSync('npx', args, { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
 
       return JSON.stringify({
         success: true,
@@ -191,9 +197,9 @@ server.addTool({
   }),
   execute: async ({ task, strategy, priority, maxAgents }) => {
     try {
-      const maxStr = maxAgents ? ` --max-agents ${maxAgents}` : '';
-      const cmd = `npx claude-flow@alpha task orchestrate "${task}" --strategy ${strategy} --priority ${priority}${maxStr}`;
-      const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 300000 });
+      const args = ['claude-flow@alpha', 'task', 'orchestrate', task, '--strategy', strategy, '--priority', priority];
+      if (maxAgents) args.push('--max-agents', String(maxAgents));
+      const result = execFileSync('npx', args, { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 300000 });
 
       return JSON.stringify({
         success: true,
@@ -222,9 +228,9 @@ server.addTool({
   }),
   execute: async ({ agent, task, stream }) => {
     try {
-      const streamFlag = stream ? '--stream' : '';
-      const cmd = `npx agentic-flow --agent "${agent}" --task "${task}" ${streamFlag}`.trim();
-      const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 300000 });
+      const args = ['agentic-flow', '--agent', agent, '--task', task];
+      if (stream) args.push('--stream');
+      const result = execFileSync('npx', args, { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 300000 });
 
       return JSON.stringify({
         success: true,
@@ -258,7 +264,7 @@ server.addTool({
         ...(dataset && { DATASET: dataset }),
         ...(streaming && { ENABLE_STREAMING: 'true' })
       };
-      const result = execSync('npx agentic-flow', { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 300000, env });
+      const result = execFileSync('npx', ['agentic-flow'], { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, timeout: 300000, env });
 
       return JSON.stringify({
         success: true,
@@ -282,7 +288,7 @@ server.addTool({
   }),
   execute: async ({ format }) => {
     try {
-      const result = execSync('npx agentic-flow --list', { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024, timeout: 30000 });
+      const result = execFileSync('npx', ['agentic-flow', '--list'], { ...NPX_EXEC_OPTS, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024, timeout: 30000 });
 
       if (format === 'detailed') {
         return result;
@@ -331,7 +337,9 @@ server.addTool({
       const { writeFileSync, existsSync, mkdirSync } = await import('fs');
       const { join } = await import('path');
 
-      const agentsDir = join(process.cwd(), '.claude', 'agents', category || 'custom');
+      // name and category become path segments: slugs only, kept under .claude/agents
+      assertSlug(name, 'agent name');
+      const agentsDir = resolveAgentDir(category || 'custom');
       if (!existsSync(agentsDir)) mkdirSync(agentsDir, { recursive: true });
 
       const markdown = `# ${name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
@@ -353,7 +361,7 @@ npx agentic-flow --agent ${name} --task "Your task"
 *Generated: ${new Date().toISOString()}*
 `;
 
-      const filePath = join(agentsDir, `${name}.md`);
+      const filePath = resolveWithin(agentsDir, `${name}.md`);
       if (existsSync(filePath)) throw new Error(`Agent '${name}' already exists`);
 
       writeFileSync(filePath, markdown, 'utf8');
@@ -393,6 +401,7 @@ server.addTool({
       const { writeFileSync, existsSync, mkdirSync } = await import('fs');
       const { join } = await import('path');
 
+      assertSlug(name, 'command name');
       const commandsDir = join(process.cwd(), '.claude', 'commands');
       if (!existsSync(commandsDir)) mkdirSync(commandsDir, { recursive: true });
 
@@ -414,7 +423,7 @@ ${examples && examples.length > 0 ? `## Examples\n\n${examples.map((ex, i) => `#
 *Generated: ${new Date().toISOString()}*
 `;
 
-      const filePath = join(commandsDir, `${name}.md`);
+      const filePath = resolveWithin(commandsDir, `${name}.md`);
       if (existsSync(filePath)) throw new Error(`Command '${name}' already exists`);
 
       writeFileSync(filePath, markdown, 'utf8');

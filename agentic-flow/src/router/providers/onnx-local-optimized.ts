@@ -8,20 +8,20 @@
  * - Better generation parameters for code tasks
  * - System prompt caching
  *
- * Note: onnxruntime-node is optional - will error if not installed
+ * Note: onnxruntime-node is optional - will error if not installed.
+ *
+ * NOTE (ruvnet/ruflo#2048): the previous top-level `await import('onnxruntime-node')`
+ * fired the native-binding load (`onnxruntime_binding.node`) at module
+ * import time. On Windows this crashes with "OS cannot run %1" — and the
+ * crash propagated to any consumer that transitively imports this file
+ * (e.g. `agentic-flow/reasoningbank` via `core/distill -> router/router`).
+ * This file does not use `ort` directly — the base `ONNXLocalProvider`
+ * it extends does, and that file now lazy-loads ort on first session
+ * init. So we just drop the eager top-level load here.
  */
 
-let ort: any = null;
-
-// Dynamic import for optional onnxruntime-node
-try {
-  ort = await import('onnxruntime-node');
-} catch {
-  // Will be handled at runtime
-}
-
 import { get_encoding } from 'tiktoken';
-import { ensurePhi4Model, ModelDownloader } from '../../utils/model-downloader.js';
+import { ensurePhi4Model, ModelDownloader, PHI4_MODEL_PATH } from '../../utils/model-downloader.js';
 import type {
   ChatParams,
   ChatResponse,
@@ -50,7 +50,7 @@ export class OptimizedONNXProvider extends ONNXLocalProvider {
     super(config);
 
     this.optimizedConfig = {
-      modelPath: config.modelPath || './models/phi-4-mini/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4/model.onnx',
+      modelPath: config.modelPath || PHI4_MODEL_PATH,
       executionProviders: config.executionProviders || ['cpu'],
       maxTokens: config.maxTokens || 200,
       temperature: config.temperature || 0.3,  // Lower for code (more deterministic)

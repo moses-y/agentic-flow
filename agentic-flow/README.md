@@ -1,11 +1,26 @@
-# 🚀 Agentic-Flow v2
+# 🚀 Agentic-Flow v2 — the Agentic Meta-Harness
 
-> **Production-ready AI agent orchestration with 66 self-learning agents, 213 MCP tools, and autonomous multi-agent swarms.**
+<!-- weaver:seo:flow:start -->
+![agentic-flow: query → LLM routing → agent harness → verified result](https://raw.githubusercontent.com/ruvnet/agentic-flow/main/agentic-flow/assets/agentic-flow-flow.svg)
+<!-- weaver:seo:flow:end -->
+
+> **Freeze the model, evolve the harness.** Agentic-Flow is an open _agentic meta-harness_: a runtime whose product is the **harness around a model**, not the model. It routes each query to the cost-optimal model, evolves its own harness and autonomously repairs code, then orchestrates 66 self-learning agents, 213 MCP tools, and multi-agent swarms on top.
 
 [![npm version](https://badge.fury.io/js/agentic-flow.svg)](https://www.npmjs.com/package/agentic-flow)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green.svg)](https://nodejs.org/)
+
+### The four pillars of the meta-harness
+
+| Pillar             | What it does                                                                                                                            | Powered by                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 🧭 **Route**       | Send each query to the _cheapest model predicted to clear a quality bar_, learned from eval logs                                        | `@metaharness/router` ([ADR-073](docs/adr/ADR-073-metaharness-router-cost-optimal-model-routing.md)) |
+| 🧬 **Evolve**      | Improve the harness itself (planner/context/reviewer/retry/tool/memory/score) and autonomously repair code — same model, better results | `@metaharness/darwin` ([ADR-074](docs/adr/ADR-074-metaharness-darwin-test-driven-repair.md))         |
+| 🤝 **Orchestrate** | Run 66 agents, 213 MCP tools, ReasoningBank memory, and multi-agent swarms                                                              | Claude Agent SDK + AgentDB                                                                           |
+| 🔏 **Verify**      | Frozen scorer + safety gate on every harness change; signed harness provenance                                                          | Darwin safety gate ([ADR-075](docs/adr/ADR-075-metaharness-harness-evolution-and-provenance.md))     |
+
+> **Why a meta-harness?** The measured lever in modern agentic systems is the _harness_, not a bigger model: a cheap model in a well-built, self-improving harness matches a frontier model at a fraction of the cost (see the [DRACO/Darwin](https://github.com/ruvnet/agent-harness-generator) findings). Agentic-Flow is the open runtime that operates that harness.
 
 ---
 
@@ -22,7 +37,31 @@ npx agentic-flow hooks pretrain
 claude
 ```
 
+Step 1 in an empty directory prints (agentic-flow 3.5.3, abridged):
+
+```text
+✅ Created CLAUDE.md
+
+📁 Created structure:
+   .claude/
+   ├── settings.json      # Claude Code settings (hooks, agents, skills, statusline)
+   ├── statusline.sh      # Custom statusline (model, tokens, cost, swarm status)
+   ├── agents/            # 80+ agent definitions (coder, tester, reviewer, etc.)
+   ├── commands/          # 100+ slash commands (swarm, github, sparc, etc.)
+   ├── skills/            # Custom skills and workflows
+   └── helpers/           # Helper utilities
+   CLAUDE.md              # Project instructions
+   .agents/skills/        # Codex skills (same integrations guidance)
+
+🚀 Next steps:
+   1. Start the MCP server:
+      npx agentic-flow@3.5.3 mcp start
+```
+
+On a Raspberry Pi 4 (no ARMv8.3 RCPC) native `@ruvector/attention` loads when its linux-arm64 binary is 2.3.1 or later (built without RCPC); an older binary is skipped in favour of the JS fallback. Set `AGENTIC_FLOW_NATIVE_ATTENTION=0|1` to override.
+
 That's it! Your project now has:
+
 - 🧠 **Self-learning hooks** that improve agent routing over time
 - 🤖 **80+ specialized agents** (coder, tester, reviewer, architect, etc.)
 - ⚡ **Background workers** triggered by keywords (ultralearn, optimize, audit)
@@ -47,13 +86,13 @@ npx agentic-flow mcp start
 ### Use in Code
 
 ```typescript
-import { AgenticFlow } from 'agentic-flow';
+import { AgenticFlow } from "agentic-flow";
 
 const flow = new AgenticFlow();
 await flow.initialize();
 
 // Route task to best agent
-const result = await flow.route('Fix the login bug');
+const result = await flow.route("Fix the login bug");
 console.log(`Best agent: ${result.agent} (${result.confidence}% confidence)`);
 ```
 
@@ -64,14 +103,14 @@ Build systems, IDEs, and CI can drive orchestration **in-process** without spawn
 **Generic client** (recommended for build agents — stable input/output: task description, memory seed, paths, provenance):
 
 ```ts
-import { createOrchestrationClient } from 'agentic-flow/orchestration';
+import { createOrchestrationClient } from "agentic-flow/orchestration";
 
-const client = createOrchestrationClient({ config: { backend: 'safe-exec' } });
+const client = createOrchestrationClient({ config: { backend: "safe-exec" } });
 const { runId } = await client.startRun({
-  taskDescription: 'Your task',
-  acceptanceCriteria: ['Tests pass'],
-  allowedPaths: ['src/'],
-  provenance: { runId: 'build-1', cardId: 'card-42' },
+  taskDescription: "Your task",
+  acceptanceCriteria: ["Tests pass"],
+  allowedPaths: ["src/"],
+  provenance: { runId: "build-1", cardId: "card-42" },
 });
 const status = await client.getStatus(runId);
 ```
@@ -105,6 +144,79 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 
 **Performance Grade: A+ (100% Pass Rate)**
 
+### **Cost-Optimal Model Routing (ADR-073)** 💰
+
+Route each query to the **cheapest model predicted to clear a quality bar**, learned
+from your own eval logs — the productized [DRACO](https://github.com/ruvnet/agent-harness-generator)
+finding, powered by [`@metaharness/router`](https://www.npmjs.com/package/@metaharness/router)
+(dependency-free k-NN / kernel-ridge, optional native FastGRNN via the already-bundled
+`@ruvector/tiny-dancer`). This is **additive** to the existing config-rule routing — it
+selects a _model_ by predicted cost-quality rather than a provider by static rule, and
+degrades gracefully to best-predicted on a cold start.
+
+```ts
+import { ModelRouter } from "agentic-flow";
+import { CostOptimalRouter } from "agentic-flow/router/cost-optimal";
+
+// Build from your eval logs: rows of (query embedding → quality each model achieved)
+const router = CostOptimalRouter.fromDataset(
+  rows,
+  {
+    "anthropic/claude-haiku-4.5": 1, // $/Mtok
+    "anthropic/claude-sonnet-4.5": 3,
+    "anthropic/claude-opus-4": 15,
+  },
+  { qualityBar: 0.8 },
+);
+
+const model = new ModelRouter();
+model.enableCostOptimalRouting({ router, embed: yourEmbedder });
+// chat() now routes each query to the cheapest model predicted to clear 0.8.
+```
+
+**Measured** (`node benchmarks/cost-optimal-router-benchmark.mjs`, 3-tier lineup,
+1000-query held-out test, bar=0.8):
+
+| Strategy         | avg $/query | mean quality | % ≥ bar   |
+| ---------------- | ----------- | ------------ | --------- |
+| always-haiku     | 1.00        | 0.412        | 14.1%     |
+| always-opus      | 15.00       | 0.930        | 100%      |
+| **cost-optimal** | **10.73**   | **0.895**    | **98.1%** |
+
+→ **28.5% cheaper than always-opus** while holding **98.1%** of queries at/above the bar.
+Routing decision latency: **p50 73µs · p99 125µs**.
+
+### **Autonomous Repair — Darwin Mode (ADR-074)** 🔧
+
+Freeze the model, **evolve the harness**: `@metaharness/darwin` mutates one policy
+surface at a time (planner / context / reviewer / retry / tool / memory / score),
+tests each in a **shell-free, env-scrubbed sandbox**, and keeps only what
+_measurably_ improves under a frozen scorer + safety gate. Exposed as a typed
+`repair()` wrapper and the `agentic-flow-repair` CLI:
+
+```bash
+# Test-Driven Repair: the repo's own tests gate every promotion
+npx --package=agentic-flow -- agentic-flow-repair ./my-repo --generations 3
+# Deterministic, Docker-free smoke run
+npx --package=agentic-flow -- agentic-flow-repair ./my-repo --mock
+```
+
+`agentic-flow-repair` is a binary provided by the `agentic-flow` package.
+Keep `--package=agentic-flow` before the command so `npx` selects that package
+instead of inferring a package name from the binary.
+
+```ts
+import { repair } from "agentic-flow/repair";
+const result = await repair({ repoRoot: "./my-repo", generations: 3 }); // sandbox 'real'
+// → { improved, winnerId, winnerLineage, baselineScore, winnerScore, deltaOverBaseline }
+```
+
+The sandbox is consistent with the repo's CWE-78 hardening (test command run via
+`execFile`, never a shell; only `PATH` + identifying vars reach a variant). The
+headline SWE-bench-Lite TDR _product_ (≈68.3% with-test, ~$0.01–0.08/instance)
+additionally needs the official `swebench` Docker harness — see
+[ADR-074](docs/adr/ADR-074-metaharness-darwin-test-driven-repair.md).
+
 ---
 
 ## 📖 Table of Contents
@@ -128,30 +240,35 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 ### 🎓 SONA: Self-Optimizing Neural Architecture
 
 **Adaptive Learning** (<1ms Overhead)
+
 - Sub-millisecond pattern learning and retrieval
 - 300x faster than traditional approaches (150ms → 0.5ms)
 - Real-time adaptation during task execution
 - No performance degradation
 
 **LoRA Fine-Tuning** (99% Parameter Reduction)
+
 - Rank-2 Micro-LoRA: 2211 ops/sec
 - Rank-16 Base-LoRA: +55% quality improvement
 - 10-100x faster training than full fine-tuning
 - Minimal memory footprint (<5MB for edge devices)
 
 **Continual Learning** (EWC++)
+
 - No catastrophic forgetting
 - Learn new tasks while preserving old knowledge
 - EWC lambda 2000-2500 for optimal memory preservation
 - Cross-agent pattern sharing
 
 **LLM Router** (60% Cost Savings)
+
 - Intelligent model selection (Sonnet vs Haiku)
 - Quality-aware routing (0.8-0.95 quality scores)
 - Budget constraints and fallback handling
 - $720/month → $288/month savings
 
 **Quality Improvements by Domain**:
+
 - Code tasks: +5.0%
 - Creative writing: +4.3%
 - Reasoning: +3.6%
@@ -159,6 +276,7 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 - Math: +1.2%
 
 **5 Configuration Profiles**:
+
 - **Real-Time**: 2200 ops/sec, <0.5ms latency
 - **Batch**: Balance throughput & adaptation
 - **Research**: +55% quality (maximum)
@@ -168,32 +286,38 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 ### 🧠 Advanced Attention Mechanisms
 
 **Flash Attention** (Production-Ready)
+
 - 2.49x speedup in JavaScript runtime
 - 7.47x speedup with NAPI runtime
 - 50-75% memory reduction
 - <0.1ms latency for all operations
 
 **Multi-Head Attention** (Standard Transformer)
+
 - 8-head configuration
 - Compatible with existing systems
 - <0.1ms latency
 
 **Linear Attention** (Scalable)
+
 - O(n) complexity
 - Perfect for long sequences (>2048 tokens)
 - <0.1ms latency
 
 **Hyperbolic Attention** (Hierarchical)
+
 - Models hierarchical structures
 - Queen-worker swarm coordination
 - <0.1ms latency
 
 **MoE Attention** (Expert Routing)
+
 - Sparse expert activation
 - Multi-agent routing
 - <0.1ms latency
 
 **GraphRoPE** (Topology-Aware)
+
 - Graph structure awareness
 - Swarm coordination
 - <0.1ms latency
@@ -208,12 +332,14 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 ### 🤖 66 Self-Learning Specialized Agents
 
 **All agents now feature v2.0.0-alpha self-learning capabilities**:
+
 - 🧠 **ReasoningBank Integration**: Learn from past successes and failures
 - 🎯 **GNN-Enhanced Context**: +12.4% better accuracy in finding relevant information
 - ⚡ **Flash Attention**: 2.49x-7.47x faster processing
 - 🤝 **Attention Coordination**: Smarter multi-agent consensus
 
 **Core Development** (Self-Learning Enabled)
+
 - `coder` - Learns code patterns, implements faster with GNN context
 - `reviewer` - Pattern-based issue detection, attention consensus reviews
 - `tester` - Learns from test failures, generates comprehensive tests
@@ -221,6 +347,7 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 - `researcher` - GNN-enhanced pattern recognition, attention synthesis
 
 **Swarm Coordination** (Advanced Attention Mechanisms)
+
 - `hierarchical-coordinator` - Hyperbolic attention for queen-worker models
 - `mesh-coordinator` - Multi-head attention for peer consensus
 - `adaptive-coordinator` - Dynamic mechanism selection (flash/multi-head/linear/hyperbolic/moe)
@@ -228,14 +355,17 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 - `swarm-memory-manager` - Cross-agent learning patterns
 
 **Consensus & Distributed**
+
 - `byzantine-coordinator`, `raft-manager`, `gossip-coordinator`
 - `crdt-synchronizer`, `quorum-manager`, `security-manager`
 
 **Performance & Optimization**
+
 - `perf-analyzer`, `performance-benchmarker`, `task-orchestrator`
 - `memory-coordinator`, `smart-agent`
 
 **GitHub & Repository** (Intelligent Code Analysis)
+
 - `pr-manager` - Smart merge strategies, attention-based conflict resolution
 - `code-review-swarm` - Pattern-based issue detection, GNN code search
 - `issue-tracker` - Smart classification, attention priority ranking
@@ -243,6 +373,7 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 - `workflow-automation` - Pattern-based workflow generation
 
 **SPARC Methodology** (Continuous Improvement)
+
 - `specification` - Learn from past specs, GNN requirement analysis
 - `pseudocode` - Algorithm pattern library, MoE optimization
 - `architecture` - Flash attention for large docs, pattern-based design
@@ -257,6 +388,37 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 - **GitHub Integration**: `github_repo_analyze`, `github_pr_manage`
 - **Performance**: `benchmark_run`, `bottleneck_analyze`, `token_usage`
 - **And 200+ more tools!**
+
+### 🔌 Ecosystem integrations (3.2.0, solver core in 3.3.0)
+
+Optional ruvnet packages, installed by default and loaded lazily, each with a built-in fallback (`npm install --omit=optional` skips them):
+
+| Package | Powers | MCP tool (readonly profile) |
+|---|---|---|
+| [`aidefence`](https://www.npmjs.com/package/aidefence) | prompt-injection screening of every routed task (`AGENTIC_FLOW_PROMPT_INJECTION`) | `prompt_injection_scan` |
+| [`@ruvector/mincut-wasm`](https://www.npmjs.com/package/@ruvector/mincut-wasm) | split a task-dependency graph between two agent teams (Node >= 22; built-in fallback on 20) | `swarm_partition_tasks` |
+| [`@ruvector/rudag`](https://www.npmjs.com/package/@ruvector/rudag) | order a task DAG into parallel waves and find its critical path (3.5.0; Kahn + longest-path fallback) | `swarm_schedule_tasks` |
+| [`@ruvnet/sublinear-core`](https://www.npmjs.com/package/@ruvnet/sublinear-core) | verified linear solves, PageRank, personalized PageRank and forward-push top-k (zero dependencies) | `sublinear_solve`, `sublinear_pagerank` |
+| [`agent-booster`](https://www.npmjs.com/package/agent-booster) | in-process code edits | `agent_booster_edit_file` (admin) |
+| [`@ruvector/router`](https://www.npmjs.com/package/@ruvector/router) | native HNSW index for `SemanticRouter` | — |
+| [`ruvector-onnx-embeddings-wasm`](https://www.npmjs.com/package/ruvector-onnx-embeddings-wasm) | all-MiniLM-L6-v2 embeddings for `AgentDBFast` | — |
+
+`ecosystem_status` reports what is installed; `import { partitionTaskGraph, scheduleTaskGraph, pageRank, scanPromptInjection } from 'agentic-flow/integrations'` gives the same functions in code. Skills: `.claude/skills/agentic-flow-ecosystem` (Claude Code) and `.agents/skills/agentic-flow-ecosystem` (Codex), both installed by `agentic-flow init`.
+
+**Schedule a swarm's tasks (3.5.0).** `from` must finish before `to` starts; `cost` is any additive unit (minutes, tokens), default 1. Tasks in the same wave can go to separate agents at once, and only shortening the critical path shortens the run:
+
+```js
+import { scheduleTaskGraph } from 'agentic-flow/integrations';
+
+const s = await scheduleTaskGraph(
+  [{ id: 'design', cost: 5 }, { id: 'api', cost: 3 }, { id: 'impl', cost: 2 }, { id: 'review', cost: 1 }, { id: 'docs', cost: 1 }],
+  [{ from: 'design', to: 'impl' }, { from: 'api', to: 'impl' }, { from: 'impl', to: 'review' }, { from: 'api', to: 'docs' }],
+);
+console.log(s.engine, JSON.stringify(s.waves), JSON.stringify(s.criticalPath), s.parallelism);
+// rudag [["design","api"],["impl","docs"],["review"]] {"tasks":["design","impl","review"],"cost":8} 1.5
+```
+
+The MCP tool `swarm_schedule_tasks` takes the same `{ tasks, dependencies }` and also returns `order`, `earliestStart` and `totalCost`. A dependency cycle is rejected with the cycle named. Without `@ruvector/rudag` the result is identical and `engine` is `builtin`.
 
 ### 🧩 Advanced Capabilities
 
@@ -297,24 +459,28 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 ### For Developers
 
 ✅ **Faster Development**
+
 - Pre-built agents for common tasks
 - Auto-spawning based on file types
 - Smart code completion and editing
 - 352x faster local code edits with Agent Booster
 
 ✅ **Better Performance**
+
 - 2.49x-7.47x speedup with Flash Attention
 - 150x-12,500x faster vector search
 - 50% memory reduction for long sequences
 - <0.1ms latency for all attention operations
 
 ✅ **Easier Integration**
+
 - Type-safe TypeScript APIs
 - Comprehensive documentation (2,500+ lines)
 - Quick start guides and examples
 - 100% backward compatible
 
 ✅ **Production-Ready**
+
 - Battle-tested in real-world scenarios
 - Enterprise-grade error handling
 - Performance metrics tracking
@@ -323,24 +489,28 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 ### For Businesses
 
 💰 **Cost Savings**
+
 - 32.3% token reduction with smart coordination
 - Faster task completion (2.8-4.4x speedup)
 - Reduced infrastructure costs
 - Open-source, no vendor lock-in
 
 📈 **Scalability**
+
 - Horizontal scaling with swarm coordination
 - Distributed consensus protocols
 - Dynamic topology optimization
 - Auto-scaling based on load
 
 🔒 **Security**
+
 - Quantum-resistant cryptography
 - Byzantine fault tolerance
 - Ed25519 signature verification
 - Secure QUIC transport
 
 🎯 **Competitive Advantage**
+
 - State-of-the-art attention mechanisms
 - +12.4% better recall with GNN
 - Attention-based multi-agent consensus
@@ -349,6 +519,7 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 ### For Researchers
 
 🔬 **Cutting-Edge Features**
+
 - Flash Attention implementation
 - GNN query refinement
 - Hyperbolic attention for hierarchies
@@ -356,12 +527,14 @@ Agentic-Flow v2 now includes **ALL** advanced vector/graph, GNN, and attention c
 - GraphRoPE position embeddings
 
 📊 **Comprehensive Benchmarks**
+
 - Grade A performance validation
 - Detailed performance analysis
 - Open benchmark suite
 - Reproducible results
 
 🧪 **Extensible Architecture**
+
 - Modular design
 - Custom agent creation
 - Plugin system
@@ -406,6 +579,7 @@ console.log(`Best solution: ${response.consensus}`);
 ```
 
 **Benefits**:
+
 - 2.49x faster response times
 - +12.4% better solution accuracy
 - Handles 50% more concurrent requests
@@ -414,27 +588,32 @@ console.log(`Best solution: ${response.consensus}`);
 #### 2. **Automated Code Review & CI/CD**
 
 ```typescript
-import { Task } from 'agentic-flow';
+import { Task } from "agentic-flow";
 
 // Spawn parallel code review agents
 await Promise.all([
-  Task('Security Auditor', 'Review for vulnerabilities', 'reviewer'),
-  Task('Performance Analyzer', 'Check optimization opportunities', 'perf-analyzer'),
-  Task('Style Checker', 'Verify code standards', 'code-analyzer'),
-  Task('Test Engineer', 'Validate test coverage', 'tester'),
+  Task("Security Auditor", "Review for vulnerabilities", "reviewer"),
+  Task(
+    "Performance Analyzer",
+    "Check optimization opportunities",
+    "perf-analyzer",
+  ),
+  Task("Style Checker", "Verify code standards", "code-analyzer"),
+  Task("Test Engineer", "Validate test coverage", "tester"),
 ]);
 
 // Automatic PR creation and management
-import { mcp__claude_flow__github_pr_manage } from 'agentic-flow/mcp';
+import { mcp__claude_flow__github_pr_manage } from "agentic-flow/mcp";
 
 await mcp__claude_flow__github_pr_manage({
-  repo: 'company/product',
-  action: 'review',
+  repo: "company/product",
+  action: "review",
   pr_number: 123,
 });
 ```
 
 **Benefits**:
+
 - 84.8% SWE-Bench solve rate
 - 2.8-4.4x faster code reviews
 - Parallel agent execution
@@ -464,6 +643,7 @@ const specializedRecs = await coordinator.routeToExperts(
 ```
 
 **Benefits**:
+
 - Better recommendations with hierarchical attention
 - Specialized agents for different product categories
 - 50% memory reduction for large catalogs
@@ -478,7 +658,7 @@ const specializedRecs = await coordinator.routeToExperts(
 const paperAnalysis = await wrapper.linearAttention(
   queryEmbedding,
   paperSectionEmbeddings,
-  paperSectionEmbeddings
+  paperSectionEmbeddings,
 );
 
 // GNN-enhanced citation network search
@@ -496,6 +676,7 @@ console.log(`Recall improved by ${relatedPapers.improvementPercent}%`);
 ```
 
 **Benefits**:
+
 - O(n) complexity for long documents
 - +12.4% better citation discovery
 - Graph-aware literature search
@@ -534,6 +715,7 @@ console.log(`Top contributors: ${consensus.topAgents.map(a => a.agentId)}`);
 ```
 
 **Benefits**:
+
 - Models hierarchical research structures
 - Queens (PIs) have higher influence
 - Better consensus than simple voting
@@ -544,14 +726,14 @@ console.log(`Top contributors: ${consensus.topAgents.map(a => a.agentId)}`);
 ```typescript
 // Use attention-based multi-agent analysis
 const dataAnalysisAgents = [
-  { agentId: 'statistician', output: 'p < 0.05', embedding: statEmbed },
-  { agentId: 'ml-expert', output: '95% accuracy', embedding: mlEmbed },
-  { agentId: 'domain-expert', output: 'Novel finding', embedding: domainEmbed },
+  { agentId: "statistician", output: "p < 0.05", embedding: statEmbed },
+  { agentId: "ml-expert", output: "95% accuracy", embedding: mlEmbed },
+  { agentId: "domain-expert", output: "Novel finding", embedding: domainEmbed },
 ];
 
 const analysis = await coordinator.coordinateAgents(
   dataAnalysisAgents,
-  'flash' // 2.49x faster
+  "flash", // 2.49x faster
 );
 
 console.log(`Consensus analysis: ${analysis.consensus}`);
@@ -559,6 +741,7 @@ console.log(`Confidence scores: ${analysis.attentionWeights}`);
 ```
 
 **Benefits**:
+
 - Multi-perspective data analysis
 - Attention-weighted consensus
 - 2.49x faster coordination
@@ -585,6 +768,7 @@ console.log(`Pipeline result: ${docPipeline.consensus}`);
 ```
 
 **Benefits**:
+
 - Topology-aware coordination (ring, mesh, hierarchical, star)
 - GraphRoPE position embeddings
 - <0.1ms coordination latency
@@ -594,17 +778,14 @@ console.log(`Pipeline result: ${docPipeline.consensus}`);
 
 ```typescript
 // Fast, accurate enterprise search
-const searchResults = await wrapper.gnnEnhancedSearch(
-  searchQuery,
-  {
-    k: 50,
-    graphContext: {
-      nodes: documentEmbeddings,
-      edges: documentRelations,
-      edgeWeights: relevanceScores,
-    },
-  }
-);
+const searchResults = await wrapper.gnnEnhancedSearch(searchQuery, {
+  k: 50,
+  graphContext: {
+    nodes: documentEmbeddings,
+    edges: documentRelations,
+    edgeWeights: relevanceScores,
+  },
+});
 
 console.log(`Found ${searchResults.results.length} documents`);
 console.log(`Baseline recall: ${searchResults.originalRecall}`);
@@ -613,6 +794,7 @@ console.log(`Improvement: +${searchResults.improvementPercent}%`);
 ```
 
 **Benefits**:
+
 - 150x-12,500x faster than brute force
 - +12.4% better recall with GNN
 - Graph-aware document relations
@@ -621,25 +803,24 @@ console.log(`Improvement: +${searchResults.improvementPercent}%`);
 #### 3. **Intelligent Workflow Automation**
 
 ```typescript
-import { mcp__claude_flow__workflow_create } from 'agentic-flow/mcp';
+import { mcp__claude_flow__workflow_create } from "agentic-flow/mcp";
 
 // Create automated workflow
 await mcp__claude_flow__workflow_create({
-  name: 'invoice-processing',
+  name: "invoice-processing",
   steps: [
-    { agent: 'ocr', task: 'Extract text from PDF' },
-    { agent: 'nlp', task: 'Parse invoice fields' },
-    { agent: 'validator', task: 'Validate amounts' },
-    { agent: 'accountant', task: 'Record in ledger' },
-    { agent: 'notifier', task: 'Send confirmation email' },
+    { agent: "ocr", task: "Extract text from PDF" },
+    { agent: "nlp", task: "Parse invoice fields" },
+    { agent: "validator", task: "Validate amounts" },
+    { agent: "accountant", task: "Record in ledger" },
+    { agent: "notifier", task: "Send confirmation email" },
   ],
-  triggers: [
-    { event: 'email-received', pattern: 'invoice.*\\.pdf' },
-  ],
+  triggers: [{ event: "email-received", pattern: "invoice.*\\.pdf" }],
 });
 ```
 
 **Benefits**:
+
 - Event-driven automation
 - Multi-agent task orchestration
 - Error handling and recovery
@@ -651,66 +832,66 @@ await mcp__claude_flow__workflow_create({
 
 ### Flash Attention Performance (Grade A)
 
-| Metric | Target | Achieved | Status |
-|--------|--------|----------|--------|
-| **Speedup (JS Runtime)** | 1.5x-4.0x | **2.49x** | ✅ PASS |
-| **Speedup (NAPI Runtime)** | 4.0x+ | **7.47x** | ✅ EXCEED |
-| **Memory Reduction** | 50%-75% | **~50%** | ✅ PASS |
-| **Latency (P50)** | <50ms | **<0.1ms** | ✅ EXCEED |
+| Metric                     | Target    | Achieved   | Status    |
+| -------------------------- | --------- | ---------- | --------- |
+| **Speedup (JS Runtime)**   | 1.5x-4.0x | **2.49x**  | ✅ PASS   |
+| **Speedup (NAPI Runtime)** | 4.0x+     | **7.47x**  | ✅ EXCEED |
+| **Memory Reduction**       | 50%-75%   | **~50%**   | ✅ PASS   |
+| **Latency (P50)**          | <50ms     | **<0.1ms** | ✅ EXCEED |
 
 **Overall Grade: A (100% Pass Rate)**
 
 ### All Attention Mechanisms
 
-| Mechanism | Avg Latency | Min | Max | Target | Status |
-|-----------|------------|-----|-----|--------|--------|
-| **Flash** | 0.00ms | 0.00ms | 0.00ms | <50ms | ✅ EXCEED |
-| **Multi-Head** | 0.07ms | 0.07ms | 0.08ms | <100ms | ✅ EXCEED |
-| **Linear** | 0.03ms | 0.03ms | 0.04ms | <100ms | ✅ EXCEED |
-| **Hyperbolic** | 0.06ms | 0.06ms | 0.06ms | <100ms | ✅ EXCEED |
-| **MoE** | 0.04ms | 0.04ms | 0.04ms | <150ms | ✅ EXCEED |
-| **GraphRoPE** | 0.05ms | 0.04ms | 0.05ms | <100ms | ✅ EXCEED |
+| Mechanism      | Avg Latency | Min    | Max    | Target | Status    |
+| -------------- | ----------- | ------ | ------ | ------ | --------- |
+| **Flash**      | 0.00ms      | 0.00ms | 0.00ms | <50ms  | ✅ EXCEED |
+| **Multi-Head** | 0.07ms      | 0.07ms | 0.08ms | <100ms | ✅ EXCEED |
+| **Linear**     | 0.03ms      | 0.03ms | 0.04ms | <100ms | ✅ EXCEED |
+| **Hyperbolic** | 0.06ms      | 0.06ms | 0.06ms | <100ms | ✅ EXCEED |
+| **MoE**        | 0.04ms      | 0.04ms | 0.04ms | <150ms | ✅ EXCEED |
+| **GraphRoPE**  | 0.05ms      | 0.04ms | 0.05ms | <100ms | ✅ EXCEED |
 
 ### Flash vs Multi-Head Speedup by Candidate Count
 
-| Candidates | Flash Time | Multi-Head Time | Speedup | Status |
-|-----------|-----------|----------------|---------|--------|
-| 10 | 0.03ms | 0.08ms | **2.77x** | ✅ |
-| 50 | 0.07ms | 0.08ms | **1.13x** | ⚠️ |
-| 100 | 0.03ms | 0.08ms | **2.98x** | ✅ |
-| 200 | 0.03ms | 0.09ms | **3.06x** | ✅ |
-| **Average** | - | - | **2.49x** | ✅ |
+| Candidates  | Flash Time | Multi-Head Time | Speedup   | Status |
+| ----------- | ---------- | --------------- | --------- | ------ |
+| 10          | 0.03ms     | 0.08ms          | **2.77x** | ✅     |
+| 50          | 0.07ms     | 0.08ms          | **1.13x** | ⚠️     |
+| 100         | 0.03ms     | 0.08ms          | **2.98x** | ✅     |
+| 200         | 0.03ms     | 0.09ms          | **3.06x** | ✅     |
+| **Average** | -          | -               | **2.49x** | ✅     |
 
 ### Vector Search Performance
 
-| Operation | Without HNSW | With HNSW | Speedup | Status |
-|-----------|-------------|-----------|---------|--------|
-| **1M vectors** | 1000ms | 6.7ms | **150x** | ✅ |
-| **10M vectors** | 10000ms | 0.8ms | **12,500x** | ✅ |
+| Operation       | Without HNSW | With HNSW | Speedup     | Status |
+| --------------- | ------------ | --------- | ----------- | ------ |
+| **1M vectors**  | 1000ms       | 6.7ms     | **150x**    | ✅     |
+| **10M vectors** | 10000ms      | 0.8ms     | **12,500x** | ✅     |
 
 ### GNN Query Refinement
 
-| Metric | Baseline | With GNN | Improvement | Status |
-|--------|----------|----------|-------------|--------|
-| **Recall@10** | 0.65 | 0.73 | **+12.4%** | 🎯 Target |
-| **Precision@10** | 0.82 | 0.87 | **+6.1%** | ✅ |
+| Metric           | Baseline | With GNN | Improvement | Status    |
+| ---------------- | -------- | -------- | ----------- | --------- |
+| **Recall@10**    | 0.65     | 0.73     | **+12.4%**  | 🎯 Target |
+| **Precision@10** | 0.82     | 0.87     | **+6.1%**   | ✅        |
 
 ### Multi-Agent Coordination Performance
 
-| Topology | Agents | Latency | Throughput | Status |
-|----------|--------|---------|-----------|--------|
-| **Mesh** | 10 | 2.1ms | 476 ops/s | ✅ |
-| **Hierarchical** | 10 | 1.8ms | 556 ops/s | ✅ |
-| **Ring** | 10 | 1.5ms | 667 ops/s | ✅ |
-| **Star** | 10 | 1.2ms | 833 ops/s | ✅ |
+| Topology         | Agents | Latency | Throughput | Status |
+| ---------------- | ------ | ------- | ---------- | ------ |
+| **Mesh**         | 10     | 2.1ms   | 476 ops/s  | ✅     |
+| **Hierarchical** | 10     | 1.8ms   | 556 ops/s  | ✅     |
+| **Ring**         | 10     | 1.5ms   | 667 ops/s  | ✅     |
+| **Star**         | 10     | 1.2ms   | 833 ops/s  | ✅     |
 
 ### Memory Efficiency
 
 | Sequence Length | Standard | Flash Attention | Reduction | Status |
-|----------------|----------|----------------|-----------|--------|
-| 512 tokens | 4.0 MB | 2.0 MB | **50%** | ✅ |
-| 1024 tokens | 16.0 MB | 4.0 MB | **75%** | ✅ |
-| 2048 tokens | 64.0 MB | 8.0 MB | **87.5%** | ✅ |
+| --------------- | -------- | --------------- | --------- | ------ |
+| 512 tokens      | 4.0 MB   | 2.0 MB          | **50%**   | ✅     |
+| 1024 tokens     | 16.0 MB  | 4.0 MB          | **75%**   | ✅     |
+| 2048 tokens     | 64.0 MB  | 8.0 MB          | **87.5%** | ✅     |
 
 ### Overall Performance Grade
 
@@ -734,13 +915,13 @@ Every agent in Agentic-Flow v2.0.0-alpha features **autonomous self-learning** p
 ```typescript
 // Agents automatically search for similar past solutions
 const similarTasks = await reasoningBank.searchPatterns({
-  task: 'Implement user authentication',
-  k: 5,              // Top 5 similar tasks
-  minReward: 0.8     // Only successful patterns (>80% success)
+  task: "Implement user authentication",
+  k: 5, // Top 5 similar tasks
+  minReward: 0.8, // Only successful patterns (>80% success)
 });
 
 // Apply lessons from past successes
-similarTasks.forEach(pattern => {
+similarTasks.forEach((pattern) => {
   console.log(`Past solution: ${pattern.task}`);
   console.log(`Success rate: ${pattern.reward}`);
   console.log(`Key learnings: ${pattern.critique}`);
@@ -748,8 +929,8 @@ similarTasks.forEach(pattern => {
 
 // Avoid past mistakes
 const failures = await reasoningBank.searchPatterns({
-  task: 'Implement user authentication',
-  onlyFailures: true // Learn from failures
+  task: "Implement user authentication",
+  onlyFailures: true, // Learn from failures
 });
 ```
 
@@ -757,16 +938,15 @@ const failures = await reasoningBank.searchPatterns({
 
 ```typescript
 // Use GNN for +12.4% better context accuracy
-const relevantContext = await agentDB.gnnEnhancedSearch(
-  taskEmbedding,
-  {
-    k: 10,
-    graphContext: buildCodeGraph(), // Related code as graph
-    gnnLayers: 3
-  }
-);
+const relevantContext = await agentDB.gnnEnhancedSearch(taskEmbedding, {
+  k: 10,
+  graphContext: buildCodeGraph(), // Related code as graph
+  gnnLayers: 3,
+});
 
-console.log(`Context accuracy improved by ${relevantContext.improvementPercent}%`);
+console.log(
+  `Context accuracy improved by ${relevantContext.improvementPercent}%`,
+);
 
 // Process large contexts 2.49x-7.47x faster
 const result = await agentDB.flashAttention(Q, K, V);
@@ -779,14 +959,14 @@ console.log(`Processed in ${result.executionTimeMs}ms`);
 // Agents automatically store every task execution
 await reasoningBank.storePattern({
   sessionId: `coder-${agentId}-${Date.now()}`,
-  task: 'Implement user authentication',
-  input: 'Requirements: OAuth2, JWT tokens, rate limiting',
+  task: "Implement user authentication",
+  input: "Requirements: OAuth2, JWT tokens, rate limiting",
   output: generatedCode,
-  reward: 0.95,      // Success score (0-1)
+  reward: 0.95, // Success score (0-1)
   success: true,
-  critique: 'Good test coverage, could improve error messages',
+  critique: "Good test coverage, could improve error messages",
   tokensUsed: 15000,
-  latencyMs: 2300
+  latencyMs: 2300,
 });
 ```
 
@@ -794,12 +974,12 @@ await reasoningBank.storePattern({
 
 Agents continuously improve through iterative learning:
 
-| Iterations | Success Rate | Accuracy | Speed | Tokens |
-|-----------|-------------|----------|-------|--------|
-| **1-5** | 70% | Baseline | Baseline | 100% |
-| **6-10** | 82% (+12%) | +8.5% | +15% | -18% |
-| **11-20** | 91% (+21%) | +15.2% | +32% | -29% |
-| **21-50** | 98% (+28%) | +21.8% | +48% | -35% |
+| Iterations | Success Rate | Accuracy | Speed    | Tokens |
+| ---------- | ------------ | -------- | -------- | ------ |
+| **1-5**    | 70%          | Baseline | Baseline | 100%   |
+| **6-10**   | 82% (+12%)   | +8.5%    | +15%     | -18%   |
+| **11-20**  | 91% (+21%)   | +15.2%   | +32%     | -29%   |
+| **21-50**  | 98% (+28%)   | +21.8%   | +48%     | -35%   |
 
 ### Agent-Specific Learning Examples
 
@@ -808,22 +988,22 @@ Agents continuously improve through iterative learning:
 ```typescript
 // Before: Search for similar implementations
 const codePatterns = await reasoningBank.searchPatterns({
-  task: 'Implement REST API endpoint',
-  k: 5
+  task: "Implement REST API endpoint",
+  k: 5,
 });
 
 // During: Use GNN to find related code
-const similarCode = await agentDB.gnnEnhancedSearch(
-  taskEmbedding,
-  { k: 10, graphContext: buildCodeDependencyGraph() }
-);
+const similarCode = await agentDB.gnnEnhancedSearch(taskEmbedding, {
+  k: 10,
+  graphContext: buildCodeDependencyGraph(),
+});
 
 // After: Store successful pattern
 await reasoningBank.storePattern({
-  task: 'Implement REST API endpoint',
+  task: "Implement REST API endpoint",
   output: generatedCode,
   reward: calculateCodeQuality(generatedCode),
-  success: allTestsPassed
+  success: allTestsPassed,
 });
 ```
 
@@ -831,15 +1011,15 @@ await reasoningBank.storePattern({
 
 ```typescript
 // Enhanced research with GNN (+12.4% better)
-const relevantDocs = await agentDB.gnnEnhancedSearch(
-  researchQuery,
-  { k: 20, graphContext: buildKnowledgeGraph() }
-);
+const relevantDocs = await agentDB.gnnEnhancedSearch(researchQuery, {
+  k: 20,
+  graphContext: buildKnowledgeGraph(),
+});
 
 // Multi-source synthesis with attention
 const synthesis = await coordinator.coordinateAgents(
   researchFindings,
-  'multi-head' // Multi-perspective analysis
+  "multi-head", // Multi-perspective analysis
 );
 ```
 
@@ -848,15 +1028,15 @@ const synthesis = await coordinator.coordinateAgents(
 ```typescript
 // Learn from past test failures
 const failedTests = await reasoningBank.searchPatterns({
-  task: 'Test authentication',
-  onlyFailures: true
+  task: "Test authentication",
+  onlyFailures: true,
 });
 
 // Generate comprehensive tests with Flash Attention
 const testCases = await agentDB.flashAttention(
   featureEmbedding,
   edgeCaseEmbeddings,
-  edgeCaseEmbeddings
+  edgeCaseEmbeddings,
 );
 ```
 
@@ -868,11 +1048,14 @@ Agents learn to work together more effectively:
 // Attention-based consensus (better than voting)
 const coordinator = new AttentionCoordinator(attentionService);
 
-const teamDecision = await coordinator.coordinateAgents([
-  { agentId: 'coder', output: 'Approach A', embedding: embed1 },
-  { agentId: 'reviewer', output: 'Approach B', embedding: embed2 },
-  { agentId: 'architect', output: 'Approach C', embedding: embed3 },
-], 'flash');
+const teamDecision = await coordinator.coordinateAgents(
+  [
+    { agentId: "coder", output: "Approach A", embedding: embed1 },
+    { agentId: "reviewer", output: "Approach B", embedding: embed2 },
+    { agentId: "architect", output: "Approach C", embedding: embed3 },
+  ],
+  "flash",
+);
 
 console.log(`Team consensus: ${teamDecision.consensus}`);
 console.log(`Confidence: ${teamDecision.attentionWeights.max()}`);
@@ -885,15 +1068,15 @@ All agents share learning patterns via ReasoningBank:
 ```typescript
 // Agent 1: Coder stores successful pattern
 await reasoningBank.storePattern({
-  task: 'Implement caching layer',
+  task: "Implement caching layer",
   output: redisImplementation,
-  reward: 0.92
+  reward: 0.92,
 });
 
 // Agent 2: Different coder retrieves the pattern
 const cachedSolutions = await reasoningBank.searchPatterns({
-  task: 'Implement caching layer',
-  k: 3
+  task: "Implement caching layer",
+  k: 3,
 });
 // Learns from Agent 1's successful approach
 ```
@@ -905,8 +1088,8 @@ Track learning progress:
 ```typescript
 // Get performance stats for a task type
 const stats = await reasoningBank.getPatternStats({
-  task: 'implement-rest-api',
-  k: 20
+  task: "implement-rest-api",
+  k: 20,
 });
 
 console.log(`Success rate: ${stats.successRate}%`);
@@ -925,16 +1108,16 @@ The `init` command sets up your project with the full Agentic-Flow infrastructur
 
 ```bash
 # Initialize project with full agent library
-npx agentic-flow@alpha init
+npx agentic-flow@3.2.0 init
 
 # Force reinitialize (overwrite existing)
-npx agentic-flow@alpha init --force
+npx agentic-flow@3.2.0 init --force
 
 # Minimal setup (empty directories only)
-npx agentic-flow@alpha init --minimal
+npx agentic-flow@3.2.0 init --minimal
 
 # Verbose output showing all files
-npx agentic-flow@alpha init --verbose
+npx agentic-flow@3.2.0 init --verbose
 ```
 
 ### What Gets Created
@@ -978,7 +1161,7 @@ The generated `settings.json` includes:
   "mcpServers": {
     "claude-flow": {
       "command": "npx",
-      "args": ["agentic-flow@alpha", "mcp", "start"]
+      "args": ["agentic-flow@3.2.0", "mcp", "start"]
     }
   }
 }
@@ -990,13 +1173,13 @@ After initialization:
 
 ```bash
 # 1. Start the MCP server
-npx agentic-flow@alpha mcp start
+npx agentic-flow@3.2.0 mcp start
 
 # 2. Bootstrap intelligence from your codebase
-npx agentic-flow@alpha hooks pretrain
+npx agentic-flow@3.2.0 hooks pretrain
 
 # 3. Generate optimized agent configurations
-npx agentic-flow@alpha hooks build-agents
+npx agentic-flow@3.2.0 hooks build-agents
 
 # 4. Start using Claude Code
 claude
@@ -1006,37 +1189,38 @@ claude
 
 ## 🧠 Self-Learning Hooks System
 
-Agentic-Flow v2 includes a powerful **self-learning hooks system** powered by RuVector intelligence (SONA Micro-LoRA, MoE attention, HNSW indexing). Hooks automatically learn from your development patterns and optimize agent routing over time.
+Agentic-Flow v2 includes a powerful **self-learning hooks system** powered by RuVector intelligence (SONA Micro-LoRA, MoE attention, cosine agent matching). Hooks automatically learn from your development patterns and optimize agent routing over time.
 
 ### Hooks Overview
 
-| Hook | Purpose | When Triggered |
-|------|---------|----------------|
-| `pre-edit` | Get context and agent suggestions | Before file edits |
-| `post-edit` | Record edit outcomes for learning | After file edits |
-| `pre-command` | Assess command risk | Before Bash commands |
-| `post-command` | Record command outcomes | After Bash commands |
-| `route` | Route task to optimal agent | On task assignment |
-| `explain` | Explain routing decision | On demand |
-| `pretrain` | Bootstrap from repository | During setup |
-| `build-agents` | Generate agent configs | After pretrain |
-| `metrics` | View learning dashboard | On demand |
-| `transfer` | Transfer patterns between projects | On demand |
+| Hook           | Purpose                            | When Triggered       |
+| -------------- | ---------------------------------- | -------------------- |
+| `pre-edit`     | Get context and agent suggestions  | Before file edits    |
+| `post-edit`    | Record edit outcomes for learning  | After file edits     |
+| `pre-command`  | Assess command risk                | Before Bash commands |
+| `post-command` | Record command outcomes            | After Bash commands  |
+| `route`        | Route task to optimal agent        | On task assignment   |
+| `explain`      | Explain routing decision           | On demand            |
+| `pretrain`     | Bootstrap from repository          | During setup         |
+| `build-agents` | Generate agent configs             | After pretrain       |
+| `metrics`      | View learning dashboard            | On demand            |
+| `transfer`     | Transfer patterns between projects | On demand            |
 
 ### Core Hook Commands
 
 #### Pre-Edit Hook
+
 Get context and agent suggestions before editing a file:
 
 ```bash
-npx agentic-flow@alpha hooks pre-edit <filePath> [options]
+npx agentic-flow@3.2.0 hooks pre-edit <filePath> [options]
 
 Options:
   -t, --task <task>   Task description
   -j, --json          Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks pre-edit src/api/users.ts --task "Add validation"
+npx agentic-flow@3.2.0 hooks pre-edit src/api/users.ts --task "Add validation"
 # Output:
 # 🎯 Suggested Agent: backend-dev
 # 📊 Confidence: 94.2%
@@ -1047,10 +1231,11 @@ npx agentic-flow@alpha hooks pre-edit src/api/users.ts --task "Add validation"
 ```
 
 #### Post-Edit Hook
+
 Record edit outcome for learning:
 
 ```bash
-npx agentic-flow@alpha hooks post-edit <filePath> [options]
+npx agentic-flow@3.2.0 hooks post-edit <filePath> [options]
 
 Options:
   -s, --success           Mark as successful edit
@@ -1061,23 +1246,24 @@ Options:
   -j, --json              Output as JSON
 
 # Example (success)
-npx agentic-flow@alpha hooks post-edit src/api/users.ts --success --agent coder
+npx agentic-flow@3.2.0 hooks post-edit src/api/users.ts --success --agent coder
 
 # Example (failure)
-npx agentic-flow@alpha hooks post-edit src/api/users.ts --fail --error "Type error"
+npx agentic-flow@3.2.0 hooks post-edit src/api/users.ts --fail --error "Type error"
 ```
 
 #### Pre-Command Hook
+
 Assess command risk before execution:
 
 ```bash
-npx agentic-flow@alpha hooks pre-command "<command>" [options]
+npx agentic-flow@3.2.0 hooks pre-command "<command>" [options]
 
 Options:
   -j, --json    Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks pre-command "rm -rf node_modules"
+npx agentic-flow@3.2.0 hooks pre-command "rm -rf node_modules"
 # Output:
 # ⚠️ Risk Level: CAUTION (65%)
 # ✅ Command APPROVED
@@ -1086,10 +1272,11 @@ npx agentic-flow@alpha hooks pre-command "rm -rf node_modules"
 ```
 
 #### Route Hook
+
 Route task to optimal agent using learned patterns:
 
 ```bash
-npx agentic-flow@alpha hooks route "<task>" [options]
+npx agentic-flow@3.2.0 hooks route "<task>" [options]
 
 Options:
   -f, --file <filePath>   Context file path
@@ -1097,7 +1284,7 @@ Options:
   -j, --json              Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks route "Fix authentication bug in login flow"
+npx agentic-flow@3.2.0 hooks route "Fix authentication bug in login flow"
 # Output:
 # 🎯 Recommended Agent: backend-dev
 # 📊 Confidence: 91.5%
@@ -1112,17 +1299,18 @@ npx agentic-flow@alpha hooks route "Fix authentication bug in login flow"
 ```
 
 #### Explain Hook
+
 Explain routing decision with full transparency:
 
 ```bash
-npx agentic-flow@alpha hooks explain "<task>" [options]
+npx agentic-flow@3.2.0 hooks explain "<task>" [options]
 
 Options:
   -f, --file <filePath>   Context file path
   -j, --json              Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks explain "Implement caching layer"
+npx agentic-flow@3.2.0 hooks explain "Implement caching layer"
 # Output:
 # 📝 Summary: Task involves performance optimization and data caching
 # 🎯 Recommended: perf-analyzer
@@ -1139,10 +1327,11 @@ npx agentic-flow@alpha hooks explain "Implement caching layer"
 ### Learning & Training Commands
 
 #### Pretrain Hook
+
 Analyze repository to bootstrap intelligence:
 
 ```bash
-npx agentic-flow@alpha hooks pretrain [options]
+npx agentic-flow@3.2.0 hooks pretrain [options]
 
 Options:
   -d, --depth <n>     Git history depth (default: 50)
@@ -1151,7 +1340,7 @@ Options:
   -j, --json          Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks pretrain --depth 100
+npx agentic-flow@3.2.0 hooks pretrain --depth 100
 # Output:
 # 🧠 Analyzing repository...
 # 📊 Pretrain Complete!
@@ -1164,10 +1353,11 @@ npx agentic-flow@alpha hooks pretrain --depth 100
 ```
 
 #### Build-Agents Hook
+
 Generate optimized agent configurations from pretrain data:
 
 ```bash
-npx agentic-flow@alpha hooks build-agents [options]
+npx agentic-flow@3.2.0 hooks build-agents [options]
 
 Options:
   -f, --focus <mode>    Focus: quality|speed|security|testing|fullstack
@@ -1177,7 +1367,7 @@ Options:
   -j, --json            Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks build-agents --focus security
+npx agentic-flow@3.2.0 hooks build-agents --focus security
 # Output:
 # ✅ Agents Generated!
 #    📦 Total: 12
@@ -1191,10 +1381,11 @@ npx agentic-flow@alpha hooks build-agents --focus security
 ```
 
 #### Metrics Hook
+
 View learning metrics and performance dashboard:
 
 ```bash
-npx agentic-flow@alpha hooks metrics [options]
+npx agentic-flow@3.2.0 hooks metrics [options]
 
 Options:
   -t, --timeframe <period>   Timeframe: 1h|24h|7d|30d (default: 24h)
@@ -1202,7 +1393,7 @@ Options:
   -j, --json                 Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks metrics --timeframe 7d --detailed
+npx agentic-flow@3.2.0 hooks metrics --timeframe 7d --detailed
 # Output:
 # 📊 Learning Metrics (7d)
 #
@@ -1220,10 +1411,11 @@ npx agentic-flow@alpha hooks metrics --timeframe 7d --detailed
 ```
 
 #### Transfer Hook
+
 Transfer learned patterns from another project:
 
 ```bash
-npx agentic-flow@alpha hooks transfer <sourceProject> [options]
+npx agentic-flow@3.2.0 hooks transfer <sourceProject> [options]
 
 Options:
   -c, --min-confidence <n>   Minimum confidence threshold (default: 0.7)
@@ -1232,7 +1424,7 @@ Options:
   -j, --json                 Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks transfer ../other-project --mode merge
+npx agentic-flow@3.2.0 hooks transfer ../other-project --mode merge
 # Output:
 # ✅ Transfer Complete!
 #    📥 Patterns transferred: 45
@@ -1246,10 +1438,11 @@ npx agentic-flow@alpha hooks transfer ../other-project --mode merge
 The `intelligence` (alias: `intel`) subcommand provides access to the full RuVector stack:
 
 #### Intelligence Route
-Route task using SONA + MoE + HNSW (150x faster than brute force):
+
+Route a task using SONA Micro-LoRA + MoE attention + cosine matching over the registered agents. The `features` field lists what actually ran:
 
 ```bash
-npx agentic-flow@alpha hooks intelligence route "<task>" [options]
+npx agentic-flow@latest hooks intelligence route "<task>" [options]
 
 Options:
   -f, --file <path>       File context
@@ -1258,49 +1451,51 @@ Options:
   -j, --json              Output as JSON
 
 # Example
-npx agentic-flow@alpha hooks intel route "Optimize database queries" --top-k 3
-# Output:
+npx agentic-flow@latest hooks intel route "Optimize database queries" --top-k 3
+# Output (agentic-flow 3.5.5, linux-x64; agent and latency vary):
 # ⚡ RuVector Intelligence Route
-# 🎯 Agent: perf-analyzer
-# 📊 Confidence: 96.2%
-# 🔧 Engine: SONA+MoE+HNSW
-# ⏱️  Latency: 0.34ms
-# 🧠 Features: micro-lora, moe-attention, hnsw-index
+# 🎯 Agent: frontend-developer
+# 📊 Confidence: 95.0%
+# 🔧 Engine: ruvector+cosine-search+sona-microlora+moe-attention
+# ⏱️  Latency: 5.09ms
+# 🧠 Features: cosine-search, sona-microlora, moe-attention
 ```
 
 #### Trajectory Tracking
+
 Track reinforcement learning trajectories for agent improvement:
 
 ```bash
 # Start a trajectory
-npx agentic-flow@alpha hooks intel trajectory-start "<task>" -a <agent>
+npx agentic-flow@latest hooks intel trajectory-start "<task>" -a <agent>
 # Output: 🎬 Trajectory Started - ID: 42
 
 # Record steps
-npx agentic-flow@alpha hooks intel trajectory-step 42 -a "edit file" -r 0.8
-npx agentic-flow@alpha hooks intel trajectory-step 42 -a "run tests" -r 1.0 --test-passed
+npx agentic-flow@latest hooks intel trajectory-step 42 -a "edit file" -r 0.8
+npx agentic-flow@latest hooks intel trajectory-step 42 -a "run tests" -r 1.0 --test-passed
 
 # End trajectory
-npx agentic-flow@alpha hooks intel trajectory-end 42 --success --quality 0.95
+npx agentic-flow@latest hooks intel trajectory-end 42 --success --quality 0.95
 # Output: 🏁 Trajectory Completed - Learning: EWC++ consolidation applied
 ```
 
 #### Pattern Storage & Search
-Store and search patterns using HNSW-indexed ReasoningBank:
+
+Store and search patterns in ReasoningBank (cosine similarity):
 
 ```bash
 # Store a pattern
-npx agentic-flow@alpha hooks intel pattern-store \
+npx agentic-flow@latest hooks intel pattern-store \
   --task "Fix React hydration error" \
   --resolution "Use useEffect with empty deps for client-only code" \
   --score 0.95
 
-# Search patterns (150x faster with HNSW)
-npx agentic-flow@alpha hooks intel pattern-search "hydration mismatch"
+# Search patterns
+npx agentic-flow@latest hooks intel pattern-search "hydration mismatch"
 # Output:
 # 🔍 Pattern Search Results
 #    Query: "hydration mismatch"
-#    Engine: HNSW (150x faster)
+#    Engine: cosine
 #    Found: 5 patterns
 #    📋 Results:
 #    1. [94%] Use useEffect with empty deps for client-only...
@@ -1308,10 +1503,11 @@ npx agentic-flow@alpha hooks intel pattern-search "hydration mismatch"
 ```
 
 #### Intelligence Stats
+
 Get RuVector intelligence layer statistics:
 
 ```bash
-npx agentic-flow@alpha hooks intelligence stats
+npx agentic-flow@latest hooks intelligence stats
 # Output:
 # 📊 RuVector Intelligence Stats
 #
@@ -1326,8 +1522,8 @@ npx agentic-flow@alpha hooks intelligence stats
 #    Top-K: 2
 #
 # 🔍 HNSW:
-#    Enabled: true
-#    Speedup: 150x vs brute-force
+#    Enabled: false
+#    Search: exact cosine scan
 #
 # 📈 Learning:
 #    Trajectories: 156
@@ -1349,30 +1545,65 @@ The `init` command automatically configures hooks in `.claude/settings.json`:
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{"type": "command", "command": "npx agentic-flow@alpha hooks pre-edit \"$TOOL_INPUT_file_path\""}]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx agentic-flow@3.2.0 hooks pre-edit \"$TOOL_INPUT_file_path\""
+          }
+        ]
       },
       {
         "matcher": "Bash",
-        "hooks": [{"type": "command", "command": "npx agentic-flow@alpha hooks pre-command \"$TOOL_INPUT_command\""}]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx agentic-flow@3.2.0 hooks pre-command \"$TOOL_INPUT_command\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{"type": "command", "command": "npx agentic-flow@alpha hooks post-edit \"$TOOL_INPUT_file_path\" --success"}]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx agentic-flow@3.2.0 hooks post-edit \"$TOOL_INPUT_file_path\" --success"
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
       {
         "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{"type": "command", "command": "npx agentic-flow@alpha hooks post-edit \"$TOOL_INPUT_file_path\" --fail --error \"$ERROR_MESSAGE\""}]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx agentic-flow@3.2.0 hooks post-edit \"$TOOL_INPUT_file_path\" --fail --error \"$ERROR_MESSAGE\""
+          }
+        ]
       }
     ],
     "SessionStart": [
-      {"hooks": [{"type": "command", "command": "npx agentic-flow@alpha hooks intelligence stats --json"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx agentic-flow@3.2.0 hooks intelligence stats --json"
+          }
+        ]
+      }
     ],
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "timeout": 3000, "command": "npx agentic-flow@alpha hooks route \"$USER_PROMPT\" --json"}]}
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 3000,
+            "command": "npx agentic-flow@3.2.0 hooks route \"$USER_PROMPT\" --json"
+          }
+        ]
+      }
     ]
   }
 }
@@ -1419,25 +1650,26 @@ Agentic-Flow v2 includes a powerful **background workers system** that runs non-
 
 Workers are automatically dispatched when trigger keywords are detected in prompts:
 
-| Trigger | Description | Priority |
-|---------|-------------|----------|
-| `ultralearn` | Deep codebase learning and pattern extraction | high |
-| `optimize` | Performance analysis and optimization suggestions | medium |
-| `audit` | Security and code quality auditing | high |
-| `document` | Documentation generation and analysis | low |
-| `refactor` | Code refactoring analysis | medium |
-| `test` | Test coverage and quality analysis | medium |
+| Trigger      | Description                                       | Priority |
+| ------------ | ------------------------------------------------- | -------- |
+| `ultralearn` | Deep codebase learning and pattern extraction     | high     |
+| `optimize`   | Performance analysis and optimization suggestions | medium   |
+| `audit`      | Security and code quality auditing                | high     |
+| `document`   | Documentation generation and analysis             | low      |
+| `refactor`   | Code refactoring analysis                         | medium   |
+| `test`       | Test coverage and quality analysis                | medium   |
 
 ### Worker Commands
 
 #### Dispatch Workers
+
 Detect triggers in prompt and dispatch background workers:
 
 ```bash
-npx agentic-flow@alpha workers dispatch "<prompt>"
+npx agentic-flow@3.2.0 workers dispatch "<prompt>"
 
 # Example
-npx agentic-flow@alpha workers dispatch "ultralearn how authentication works"
+npx agentic-flow@3.2.0 workers dispatch "ultralearn how authentication works"
 # Output:
 # ⚡ Background Workers Spawned:
 #   • ultralearn: worker-1234
@@ -1446,10 +1678,11 @@ npx agentic-flow@alpha workers dispatch "ultralearn how authentication works"
 ```
 
 #### Monitor Status
+
 Get worker status and progress:
 
 ```bash
-npx agentic-flow@alpha workers status [workerId]
+npx agentic-flow@3.2.0 workers status [workerId]
 
 Options:
   -s, --session <id>   Filter by session
@@ -1457,7 +1690,7 @@ Options:
   -j, --json           Output as JSON
 
 # Example - Dashboard view
-npx agentic-flow@alpha workers status
+npx agentic-flow@3.2.0 workers status
 # Output:
 # ┌─ Background Workers Dashboard ────────────┐
 # │ ✅ ultralearn: complete                    │
@@ -1471,10 +1704,11 @@ npx agentic-flow@alpha workers status
 ```
 
 #### View Results
+
 View worker analysis results:
 
 ```bash
-npx agentic-flow@alpha workers results [workerId]
+npx agentic-flow@3.2.0 workers results [workerId]
 
 Options:
   -s, --session <id>    Filter by session
@@ -1482,7 +1716,7 @@ Options:
   -j, --json            Output as JSON
 
 # Example
-npx agentic-flow@alpha workers results
+npx agentic-flow@3.2.0 workers results
 # Output:
 # 📊 Worker Analysis Results
 #   • ultralearn "authentication":
@@ -1494,10 +1728,11 @@ npx agentic-flow@alpha workers results
 ```
 
 #### List Triggers
+
 List all available trigger keywords:
 
 ```bash
-npx agentic-flow@alpha workers triggers
+npx agentic-flow@3.2.0 workers triggers
 # Output:
 # ⚡ Available Background Worker Triggers:
 # ┌──────────────┬──────────┬────────────────────────────────────────┐
@@ -1511,17 +1746,18 @@ npx agentic-flow@alpha workers triggers
 ```
 
 #### Worker Statistics
+
 Get worker statistics:
 
 ```bash
-npx agentic-flow@alpha workers stats [options]
+npx agentic-flow@3.2.0 workers stats [options]
 
 Options:
   -t, --timeframe <period>   Timeframe: 1h, 24h, 7d (default: 24h)
   -j, --json                 Output as JSON
 
 # Example
-npx agentic-flow@alpha workers stats --timeframe 7d
+npx agentic-flow@3.2.0 workers stats --timeframe 7d
 # Output:
 # ⚡ Worker Statistics (7d)
 # Total Workers: 45
@@ -1543,14 +1779,16 @@ npx agentic-flow@alpha workers stats --timeframe 7d
 Create and manage custom workers with specific analysis phases:
 
 #### List Presets
+
 ```bash
-npx agentic-flow@alpha workers presets
+npx agentic-flow@3.2.0 workers presets
 # Shows available worker presets: quick-scan, deep-analysis, security-audit, etc.
 ```
 
 #### Create Custom Worker
+
 ```bash
-npx agentic-flow@alpha workers create <name> [options]
+npx agentic-flow@3.2.0 workers create <name> [options]
 
 Options:
   -p, --preset <preset>     Preset to use (default: quick-scan)
@@ -1558,12 +1796,13 @@ Options:
   -d, --description <desc>  Worker description
 
 # Example
-npx agentic-flow@alpha workers create security-check --preset security-audit --triggers "security,vuln"
+npx agentic-flow@3.2.0 workers create security-check --preset security-audit --triggers "security,vuln"
 ```
 
 #### Run Custom Worker
+
 ```bash
-npx agentic-flow@alpha workers run <nameOrTrigger> [options]
+npx agentic-flow@3.2.0 workers run <nameOrTrigger> [options]
 
 Options:
   -t, --topic <topic>    Topic to analyze
@@ -1571,7 +1810,7 @@ Options:
   -j, --json             Output as JSON
 
 # Example
-npx agentic-flow@alpha workers run security-check --topic "authentication flow"
+npx agentic-flow@3.2.0 workers run security-check --topic "authentication flow"
 ```
 
 ### Native RuVector Workers
@@ -1579,7 +1818,7 @@ npx agentic-flow@alpha workers run security-check --topic "authentication flow"
 Run native RuVector workers for advanced analysis:
 
 ```bash
-npx agentic-flow@alpha workers native <type> [options]
+npx agentic-flow@3.2.0 workers native <type> [options]
 
 Types:
   security   - Run security vulnerability scan
@@ -1588,7 +1827,7 @@ Types:
   phases     - List available native phases
 
 # Example
-npx agentic-flow@alpha workers native security
+npx agentic-flow@3.2.0 workers native security
 # Output:
 # ⚡ Native Worker: security
 # ══════════════════════════════════════════════════
@@ -1615,7 +1854,7 @@ npx agentic-flow@alpha workers native security
 Run performance benchmarks on the worker system:
 
 ```bash
-npx agentic-flow@alpha workers benchmark [options]
+npx agentic-flow@3.2.0 workers benchmark [options]
 
 Options:
   -t, --type <type>         Benchmark type: all, trigger-detection, registry,
@@ -1624,7 +1863,7 @@ Options:
   -j, --json                Output as JSON
 
 # Example
-npx agentic-flow@alpha workers benchmark --type trigger-detection
+npx agentic-flow@3.2.0 workers benchmark --type trigger-detection
 # Output:
 # ✅ Trigger Detection Benchmark
 #    Operation: detect triggers in prompts
@@ -1639,7 +1878,7 @@ npx agentic-flow@alpha workers benchmark --type trigger-detection
 View worker-agent integration statistics:
 
 ```bash
-npx agentic-flow@alpha workers integration
+npx agentic-flow@3.2.0 workers integration
 # Output:
 # ⚡ Worker-Agent Integration Stats
 # ════════════════════════════════════════
@@ -1656,13 +1895,14 @@ npx agentic-flow@alpha workers integration
 ```
 
 #### Agent Recommendations
+
 Get recommended agents for a worker trigger:
 
 ```bash
-npx agentic-flow@alpha workers agents <trigger>
+npx agentic-flow@3.2.0 workers agents <trigger>
 
 # Example
-npx agentic-flow@alpha workers agents ultralearn
+npx agentic-flow@3.2.0 workers agents ultralearn
 # Output:
 # ⚡ Agent Recommendations for "ultralearn"
 #
@@ -1686,20 +1926,24 @@ Workers are automatically configured in `.claude/settings.json` via hooks:
   "hooks": {
     "UserPromptSubmit": [
       {
-        "hooks": [{
-          "type": "command",
-          "timeout": 5000,
-          "background": true,
-          "command": "npx agentic-flow@alpha workers dispatch-prompt \"$USER_PROMPT\" --session \"$SESSION_ID\" --json"
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5000,
+            "background": true,
+            "command": "npx agentic-flow@3.2.0 workers dispatch-prompt \"$USER_PROMPT\" --session \"$SESSION_ID\" --json"
+          }
+        ]
       }
     ],
     "SessionEnd": [
       {
-        "hooks": [{
-          "type": "command",
-          "command": "npx agentic-flow@alpha workers cleanup --age 24"
-        }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx agentic-flow@3.2.0 workers cleanup --age 24"
+          }
+        ]
       }
     ]
   }
@@ -1719,11 +1963,8 @@ Workers are automatically configured in `.claude/settings.json` via hooks:
 ### Install from npm
 
 ```bash
-# Install latest alpha version
-npm install agentic-flow@alpha
-
-# Or install specific version
-npm install agentic-flow@2.0.0-alpha
+# Install the current release
+npm install agentic-flow@3.2.0
 ```
 
 ### Install from Source
@@ -1779,20 +2020,20 @@ node -e "console.log(require('@ruvector/attention').runtime)"
 ```typescript
 class EnhancedAgentDBWrapper {
   // Attention mechanisms
-  async flashAttention(Q, K, V): Promise<AttentionResult>
-  async multiHeadAttention(Q, K, V): Promise<AttentionResult>
-  async linearAttention(Q, K, V): Promise<AttentionResult>
-  async hyperbolicAttention(Q, K, V, curvature): Promise<AttentionResult>
-  async moeAttention(Q, K, V, numExperts): Promise<AttentionResult>
-  async graphRoPEAttention(Q, K, V, graph): Promise<AttentionResult>
+  async flashAttention(Q, K, V): Promise<AttentionResult>;
+  async multiHeadAttention(Q, K, V): Promise<AttentionResult>;
+  async linearAttention(Q, K, V): Promise<AttentionResult>;
+  async hyperbolicAttention(Q, K, V, curvature): Promise<AttentionResult>;
+  async moeAttention(Q, K, V, numExperts): Promise<AttentionResult>;
+  async graphRoPEAttention(Q, K, V, graph): Promise<AttentionResult>;
 
   // GNN query refinement
-  async gnnEnhancedSearch(query, options): Promise<GNNRefinementResult>
+  async gnnEnhancedSearch(query, options): Promise<GNNRefinementResult>;
 
   // Vector operations
-  async vectorSearch(query, options): Promise<VectorSearchResult[]>
-  async insertVector(vector, metadata): Promise<void>
-  async deleteVector(id): Promise<void>
+  async vectorSearch(query, options): Promise<VectorSearchResult[]>;
+  async insertVector(vector, metadata): Promise<void>;
+  async deleteVector(id): Promise<void>;
 }
 ```
 
@@ -1801,16 +2042,24 @@ class EnhancedAgentDBWrapper {
 ```typescript
 class AttentionCoordinator {
   // Agent coordination
-  async coordinateAgents(outputs, mechanism): Promise<CoordinationResult>
+  async coordinateAgents(outputs, mechanism): Promise<CoordinationResult>;
 
   // Expert routing
-  async routeToExperts(task, agents, topK): Promise<ExpertRoutingResult>
+  async routeToExperts(task, agents, topK): Promise<ExpertRoutingResult>;
 
   // Topology-aware coordination
-  async topologyAwareCoordination(outputs, topology, graph?): Promise<CoordinationResult>
+  async topologyAwareCoordination(
+    outputs,
+    topology,
+    graph?,
+  ): Promise<CoordinationResult>;
 
   // Hierarchical coordination
-  async hierarchicalCoordination(queens, workers, curvature): Promise<CoordinationResult>
+  async hierarchicalCoordination(
+    queens,
+    workers,
+    curvature,
+  ): Promise<CoordinationResult>;
 }
 ```
 
@@ -2035,7 +2284,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 **Install now and experience the future of AI agents:**
 
 ```bash
-npm install agentic-flow@alpha
+npm install agentic-flow@3.2.0
 ```
 
 **Made with ❤️ by [@ruvnet](https://github.com/ruvnet)**
@@ -2045,3 +2294,18 @@ npm install agentic-flow@alpha
 **Grade: A+ (Perfect Integration)**
 **Status: Production Ready**
 **Last Updated: 2025-12-03**
+
+<!-- weaver:seo:links:start -->
+## Works with / Used by
+
+Part of the [ruv.io](https://ruv.io) open-source stack for AI agents, LLM routing, agent orchestration.
+
+- **Works with** (its runtime dependencies): [`@metaharness/router`](https://www.npmjs.com/package/@metaharness/router), [`@ruvector/edge-full`](https://www.npmjs.com/package/@ruvector/edge-full), [`@ruvector/router`](https://www.npmjs.com/package/@ruvector/router), [`@ruvector/tiny-dancer`](https://www.npmjs.com/package/@ruvector/tiny-dancer), [`agentdb`](https://www.npmjs.com/package/agentdb), [`ruvector`](https://www.npmjs.com/package/ruvector), [`ruvector-onnx-embeddings-wasm`](https://www.npmjs.com/package/ruvector-onnx-embeddings-wasm), [`@ruvector/attention`](https://www.npmjs.com/package/@ruvector/attention), [`@ruvector/mincut-wasm`](https://www.npmjs.com/package/@ruvector/mincut-wasm), [`@ruvector/rudag`](https://www.npmjs.com/package/@ruvector/rudag), [`@ruvector/sona`](https://www.npmjs.com/package/@ruvector/sona), [`@ruvnet/sublinear-core`](https://www.npmjs.com/package/@ruvnet/sublinear-core), [`agent-booster`](https://www.npmjs.com/package/agent-booster), [`aidefence`](https://www.npmjs.com/package/aidefence)
+- **Used by** (published packages that depend on it): [`@agentic-robotics/cli`](https://www.npmjs.com/package/@agentic-robotics/cli), [`@agentic-robotics/mcp`](https://www.npmjs.com/package/@agentic-robotics/mcp), [`@agentic-robotics/self-learning`](https://www.npmjs.com/package/@agentic-robotics/self-learning), [`@claude-flow/browser`](https://www.npmjs.com/package/@claude-flow/browser), [`@claude-flow/cli`](https://www.npmjs.com/package/@claude-flow/cli), [`@claude-flow/embeddings`](https://www.npmjs.com/package/@claude-flow/embeddings), [`@claude-flow/integration`](https://www.npmjs.com/package/@claude-flow/integration), [`@claude-flow/plugin-agent-federation`](https://www.npmjs.com/package/@claude-flow/plugin-agent-federation), [`@foxruv/e2b-runner`](https://www.npmjs.com/package/@foxruv/e2b-runner), [`@foxruv/iris`](https://www.npmjs.com/package/@foxruv/iris), [`@foxruv/iris-ultrathink`](https://www.npmjs.com/package/@foxruv/iris-ultrathink), [`@foxruv/nova-medicina`](https://www.npmjs.com/package/@foxruv/nova-medicina)
+<!-- weaver:seo:links:end -->
+
+<!-- weaver:seo:footer:start -->
+---
+
+Built by [rUv](https://ruv.io) · [ruv.io](https://ruv.io) · [Source](https://github.com/ruvnet/agentic-flow)
+<!-- weaver:seo:footer:end -->

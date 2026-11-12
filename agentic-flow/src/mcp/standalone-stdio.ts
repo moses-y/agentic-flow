@@ -1,9 +1,21 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/no-explicit-any -- pre-existing catch(error: any) handlers; outside scope of CWE-78 fix */
 // Standalone agentic-flow MCP server - runs directly via stdio without spawning subprocesses
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
-import { execSync } from 'child_process';
-import { resolve } from 'path';
+import { execFileSync } from 'child_process';
+import { registerHarnessTools } from './tools/harness-tools.js';
+import { registerEcosystemTools, ECOSYSTEM_TOOL_NAMES } from './tools/ecosystem-tools.js';
+import { applyAgentBoosterEdit } from '../integrations/agent-booster.js';
+import { installMcpPolicy, parseMcpProfile } from './mcp-policy.js';
+import { assertCategoryPath, resolveInsideCwd } from '../utils/path-safety.js';
+import { mcpServerVersion } from '../utils/package-version.js';
+
+// Security: All shell-outs use execFileSync with argv arrays (shell: false) to
+// prevent OS command injection via tool parameters (CWE-78). Do NOT reintroduce
+// execSync with template-string interpolation here — every prior occurrence in
+// this file was an injection sink reachable through MCP tool arguments.
+const NPX_EXEC_OPTS = { shell: false as const };
 
 // Suppress FastMCP internal warnings for cleaner output
 const originalConsoleWarn = console.warn;
@@ -23,8 +35,23 @@ console.error('📦 Local agentic-flow tools available');
 
 const server = new FastMCP({
   name: 'agentic-flow',
-  version: '1.0.8'
+  version: mcpServerVersion()
 });
+
+const mcpProfile = parseMcpProfile(process.env.AGENTIC_FLOW_MCP_PROFILE);
+installMcpPolicy(server as any, {
+  profile: mcpProfile,
+  allowDarwinExecution: process.env.AGENTIC_FLOW_MCP_ENABLE_DARWIN === 'true',
+});
+console.error(`🔐 MCP capability profile: ${mcpProfile}`);
+
+// ADR-075: harness evolution/repair + provenance tools (harness_repair,
+// harness_manifest, harness_verify).
+registerHarnessTools(server as unknown as Parameters<typeof registerHarnessTools>[0]);
+
+// Ecosystem tools backed by optional ruvnet packages (aidefence, mincut-wasm,
+// @ruvnet/sublinear-core); each has a built-in fallback. Pure computations.
+registerEcosystemTools(server as unknown as Parameters<typeof registerEcosystemTools>[0]);
 
 // Tool: Run agentic-flow agent
 server.addTool({
@@ -75,12 +102,13 @@ server.addTool({
     retryOnError
   }) => {
     try {
-      // Build command with all parameters
-      let cmd = `npx --yes agentic-flow --agent "${agent}" --task "${task}"`;
+      // Build argv (NOT a shell string) — every user-supplied value stays a
+      // separate argv element and cannot be reinterpreted by the shell.
+      const args: string[] = ['--yes', 'agentic-flow', '--agent', agent, '--task', task];
 
       // Provider & Model
-      if (model) cmd += ` --model "${model}"`;
-      if (provider) cmd += ` --provider ${provider}`;
+      if (model) args.push('--model', model);
+      if (provider) args.push('--provider', provider);
 
       // API Keys (set as env vars)
       const env = { ...process.env };
@@ -88,21 +116,22 @@ server.addTool({
       if (openrouterApiKey) env.OPENROUTER_API_KEY = openrouterApiKey;
 
       // Agent Behavior
-      if (stream) cmd += ' --stream';
-      if (temperature !== undefined) cmd += ` --temperature ${temperature}`;
-      if (maxTokens) cmd += ` --max-tokens ${maxTokens}`;
+      if (stream) args.push('--stream');
+      if (temperature !== undefined) args.push('--temperature', String(temperature));
+      if (maxTokens) args.push('--max-tokens', String(maxTokens));
 
       // Directories
-      if (agentsDir) cmd += ` --agents-dir "${agentsDir}"`;
+      if (agentsDir) args.push('--agents-dir', agentsDir);
 
       // Output
-      if (outputFormat) cmd += ` --output ${outputFormat}`;
-      if (verbose) cmd += ' --verbose';
+      if (outputFormat) args.push('--output', outputFormat);
+      if (verbose) args.push('--verbose');
 
       // Execution
-      if (retryOnError) cmd += ' --retry';
+      if (retryOnError) args.push('--retry');
 
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', args, {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: timeout || 300000,
@@ -130,9 +159,8 @@ server.addTool({
   parameters: z.object({}),
   execute: async () => {
     try {
-      // Use npx to run agentic-flow from npm registry
-      const cmd = `npx --yes agentic-flow --list`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', ['--yes', 'agentic-flow', '--list'], {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 5 * 1024 * 1024,
         timeout: 30000
@@ -161,11 +189,19 @@ server.addTool({
   }),
   execute: async ({ name, description, systemPrompt, category, tools }) => {
     try {
-      let cmd = `npx --yes agentic-flow agent create --name "${name}" --description "${description}" --prompt "${systemPrompt}"`;
-      if (category && category !== 'custom') cmd += ` --category "${category}"`;
-      if (tools && tools.length > 0) cmd += ` --tools "${tools.join(',')}"`;
+      // The CLI turns category into a directory under .claude/agents
+      assertCategoryPath(category || 'custom');
+      const args: string[] = [
+        '--yes', 'agentic-flow', 'agent', 'create',
+        '--name', name,
+        '--description', description,
+        '--prompt', systemPrompt
+      ];
+      if (category && category !== 'custom') args.push('--category', category);
+      if (tools && tools.length > 0) args.push('--tools', tools.join(','));
 
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', args, {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 60000,
@@ -195,8 +231,8 @@ server.addTool({
   }),
   execute: async ({ format, filterSource }) => {
     try {
-      const cmd = `npx --yes agentic-flow agent list ${format || 'summary'}`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', ['--yes', 'agentic-flow', 'agent', 'list', format || 'summary'], {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 30000
@@ -236,8 +272,8 @@ server.addTool({
   }),
   execute: async ({ name }) => {
     try {
-      const cmd = `npx --yes agentic-flow agent info "${name}"`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', ['--yes', 'agentic-flow', 'agent', 'info', name], {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 30000
@@ -261,8 +297,8 @@ server.addTool({
   parameters: z.object({}),
   execute: async () => {
     try {
-      const cmd = `npx --yes agentic-flow agent conflicts`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', ['--yes', 'agentic-flow', 'agent', 'conflicts'], {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 30000
@@ -290,20 +326,21 @@ server.addTool({
   }),
   execute: async ({ agent, task, priority, max_cost }) => {
     try {
-      let cmd = `npx --yes agentic-flow --agent "${agent}" --task "${task}" --optimize`;
+      const args: string[] = ['--yes', 'agentic-flow', '--agent', agent, '--task', task, '--optimize'];
 
       if (priority && priority !== 'balanced') {
-        cmd += ` --priority ${priority}`;
+        args.push('--priority', priority);
       }
 
       if (max_cost) {
-        cmd += ` --max-cost ${max_cost}`;
+        args.push('--max-cost', String(max_cost));
       }
 
       // Add dry-run to just get recommendation without execution
-      cmd += ' --help'; // This will show the optimization without running
+      args.push('--help'); // This will show the optimization without running
 
-      const result = execSync(cmd, {
+      execFileSync('npx', args, {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 10000
@@ -343,12 +380,15 @@ server.addTool({
       const fs = await import('fs');
       const path = await import('path');
 
+      // Only files inside the working directory may be read or written
+      const safePath = resolveInsideCwd(target_filepath);
+
       // Read current file
-      if (!fs.existsSync(target_filepath)) {
+      if (!fs.existsSync(safePath)) {
         throw new Error(`File not found: ${target_filepath}`);
       }
 
-      const originalCode = fs.readFileSync(target_filepath, 'utf-8');
+      const originalCode = fs.readFileSync(safePath, 'utf-8');
 
       // Detect language if not provided
       if (!language) {
@@ -361,20 +401,13 @@ server.addTool({
         language = langMap[ext] || 'javascript';
       }
 
-      // Apply edit using agent-booster@0.2.2 CLI (automatically installs from npm if not available)
-      const cmd = `npx --yes agent-booster@0.2.2 apply --language ${language}`;
-      const result = execSync(cmd, {
-        encoding: 'utf-8',
-        input: JSON.stringify({ code: originalCode, edit: code_edit }),
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 30000  // Allow time for npx to download package on first run
-      });
-
-      const parsed = JSON.parse(result);
+      // Apply edit in-process via the optional agent-booster package; falls back
+      // to the pinned agent-booster@0.2.2 CLI through npx when it is not installed.
+      const parsed = await applyAgentBoosterEdit(originalCode, code_edit, language, { npxTimeoutMs: 30000 });
 
       if (parsed.success && parsed.confidence >= 0.7) {
         // High confidence - use Agent Booster result
-        fs.writeFileSync(target_filepath, parsed.output);
+        fs.writeFileSync(safePath, parsed.output);
 
         return JSON.stringify({
           success: true,
@@ -431,9 +464,13 @@ server.addTool({
       const results = [];
       let totalLatency = 0;
 
-      for (const edit of edits) {
-        const originalCode = fs.existsSync(edit.target_filepath)
-          ? fs.readFileSync(edit.target_filepath, 'utf-8')
+      // Validate every path before touching any file: all must be inside cwd
+      const safePaths = edits.map(edit => resolveInsideCwd(edit.target_filepath));
+
+      for (const [index, edit] of edits.entries()) {
+        const safePath = safePaths[index];
+        const originalCode = fs.existsSync(safePath)
+          ? fs.readFileSync(safePath, 'utf-8')
           : '';
 
         // Detect language
@@ -449,19 +486,11 @@ server.addTool({
         }
 
         // Apply edit
-        const cmd = `npx --yes agent-booster@0.2.2 apply --language ${language}`;
-        const result = execSync(cmd, {
-          encoding: 'utf-8',
-          input: JSON.stringify({ code: originalCode, edit: edit.code_edit }),
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: 5000
-        });
-
-        const parsed = JSON.parse(result);
+        const parsed = await applyAgentBoosterEdit(originalCode, edit.code_edit, language, { npxTimeoutMs: 5000 });
         totalLatency += parsed.latency;
 
         if (parsed.success && parsed.confidence >= 0.7) {
-          fs.writeFileSync(edit.target_filepath, parsed.output);
+          fs.writeFileSync(safePath, parsed.output);
           results.push({
             file: edit.target_filepath,
             success: true,
@@ -514,7 +543,7 @@ server.addTool({
       let match;
 
       while ((match = regex.exec(markdown)) !== null) {
-        const [_, language, filepath, instruction, code_edit] = match;
+        const [, language, filepath, instruction, code_edit] = match;
         edits.push({
           target_filepath: filepath.trim(),
           instructions: instruction.trim(),
@@ -531,9 +560,13 @@ server.addTool({
       const results = [];
       let totalLatency = 0;
 
-      for (const edit of edits) {
-        const originalCode = fs.existsSync(edit.target_filepath)
-          ? fs.readFileSync(edit.target_filepath, 'utf-8')
+      // Validate every path before touching any file: all must be inside cwd
+      const safePaths = edits.map(edit => resolveInsideCwd(edit.target_filepath));
+
+      for (const [index, edit] of edits.entries()) {
+        const safePath = safePaths[index];
+        const originalCode = fs.existsSync(safePath)
+          ? fs.readFileSync(safePath, 'utf-8')
           : '';
 
         let language = edit.language;
@@ -547,19 +580,11 @@ server.addTool({
           language = langMap[ext] || 'javascript';
         }
 
-        const cmd = `npx --yes agent-booster@0.2.2 apply --language ${language}`;
-        const result = execSync(cmd, {
-          encoding: 'utf-8',
-          input: JSON.stringify({ code: originalCode, edit: edit.code_edit }),
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: 5000
-        });
-
-        const parsed = JSON.parse(result);
+        const parsed = await applyAgentBoosterEdit(originalCode, edit.code_edit, language, { npxTimeoutMs: 5000 });
         totalLatency += parsed.latency;
 
         if (parsed.success && parsed.confidence >= 0.7) {
-          fs.writeFileSync(edit.target_filepath, parsed.output);
+          fs.writeFileSync(safePath, parsed.output);
           results.push({
             file: edit.target_filepath,
             instruction: edit.instructions,
@@ -602,8 +627,8 @@ server.addTool({
   parameters: z.object({}),
   execute: async () => {
     try {
-      const cmd = `npx agentdb db stats`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', ['agentdb', 'db', 'stats'], {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 5 * 1024 * 1024,
         timeout: 10000
@@ -637,21 +662,22 @@ server.addTool({
   }),
   execute: async ({ sessionId, task, reward, success, critique, input, output, latencyMs, tokensUsed }) => {
     try {
-      const args = [
+      const cliArgs: string[] = [
+        'agentdb', 'reflexion', 'store',
         sessionId,
-        `"${task}"`,
+        task,
         reward.toString(),
         success.toString()
       ];
 
-      if (critique) args.push(`"${critique}"`);
-      if (input) args.push(`"${input}"`);
-      if (output) args.push(`"${output}"`);
-      if (latencyMs !== undefined) args.push(latencyMs.toString());
-      if (tokensUsed !== undefined) args.push(tokensUsed.toString());
+      if (critique) cliArgs.push(critique);
+      if (input) cliArgs.push(input);
+      if (output) cliArgs.push(output);
+      if (latencyMs !== undefined) cliArgs.push(latencyMs.toString());
+      if (tokensUsed !== undefined) cliArgs.push(tokensUsed.toString());
 
-      const cmd = `npx agentdb reflexion store ${args.join(' ')}`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', cliArgs, {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 30000
@@ -685,14 +711,14 @@ server.addTool({
   }),
   execute: async ({ task, k, minReward, onlySuccesses, onlyFailures }) => {
     try {
-      const args = [`"${task}"`, (k || 5).toString()];
+      const cliArgs: string[] = ['agentdb', 'reflexion', 'retrieve', task, (k || 5).toString()];
 
-      if (minReward !== undefined) args.push(minReward.toString());
-      if (onlyFailures) args.push('true', 'false');
-      else if (onlySuccesses) args.push('false', 'true');
+      if (minReward !== undefined) cliArgs.push(minReward.toString());
+      if (onlyFailures) cliArgs.push('true', 'false');
+      else if (onlySuccesses) cliArgs.push('false', 'true');
 
-      const cmd = `npx agentdb reflexion retrieve ${args.join(' ')}`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', cliArgs, {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 30000
@@ -726,8 +752,8 @@ server.addTool({
   }),
   execute: async ({ task, k }) => {
     try {
-      const cmd = `npx agentdb reflexion critique-summary "${task}" ${k || 5}`;
-      const result = execSync(cmd, {
+      const result = execFileSync('npx', ['agentdb', 'reflexion', 'critique-summary', task, String(k || 5)], {
+        ...NPX_EXEC_OPTS,
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: 30000
@@ -785,7 +811,7 @@ server.addTool({
   }
 });
 
-console.error('✅ Registered 15 tools (7 agentic-flow + 3 agent-booster + 5 agentdb):');
+console.error(`✅ Tools (subject to the ${mcpProfile} profile): 7 agentic-flow + 3 agent-booster + 5 agentdb + harness + ${ECOSYSTEM_TOOL_NAMES.length} ecosystem:`);
 console.error('   • agentic_flow_agent (execute agent with 13 parameters)');
 console.error('   • agentic_flow_list_agents (list 66+ agents)');
 console.error('   • agentic_flow_create_agent (create custom agent)');
@@ -801,6 +827,7 @@ console.error('   • agentdb_pattern_store (store reasoning patterns) 🧠 NEW'
 console.error('   • agentdb_pattern_search (search similar patterns) 🧠 NEW');
 console.error('   • agentdb_pattern_stats (pattern analytics) 🧠 NEW');
 console.error('   • agentdb_clear_cache (clear query cache) 🧠 NEW');
+console.error(`   • ${ECOSYSTEM_TOOL_NAMES.join(', ')}`);
 console.error('🔌 Starting stdio transport...');
 
 server.start({ transportType: 'stdio' }).then(() => {

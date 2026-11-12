@@ -1,7 +1,10 @@
 // Anthropic to Gemini Proxy Server
 // Converts Anthropic API format to Google Gemini format
 import express, { Request, Response, NextFunction } from 'express';
+import type { Server } from 'http';
 import { logger } from '../utils/logger.js';
+import { createProxyAuthMiddleware, resolveProxyHost, resolveProxyToken } from './proxy-auth.js';
+import { forEachSseLines, sseLines } from './sse-lines.js';
 
 interface AnthropicMessage {
   role: 'user' | 'assistant';
@@ -61,13 +64,18 @@ export class AnthropicToGeminiProxy {
   private geminiApiKey: string;
   private geminiBaseUrl: string;
   private defaultModel: string;
+  private authToken: string;
+  private server?: Server;
 
   constructor(config: {
     geminiApiKey: string;
     geminiBaseUrl?: string;
     defaultModel?: string;
+    /** Token clients must send; defaults to AGENTIC_FLOW_PROXY_TOKEN or a random one. */
+    authToken?: string;
   }) {
     this.app = express();
+    this.authToken = config.authToken || resolveProxyToken();
     this.geminiApiKey = config.geminiApiKey;
     this.geminiBaseUrl = config.geminiBaseUrl || 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultModel = config.defaultModel || 'gemini-2.0-flash-exp';
@@ -76,7 +84,15 @@ export class AnthropicToGeminiProxy {
     this.setupRoutes();
   }
 
+  /** The token clients must present as x-api-key or Authorization: Bearer. */
+  public getAuthToken(): string {
+    return this.authToken;
+  }
+
   private setupMiddleware(): void {
+    // Reject unauthenticated callers before parsing their (up to 50mb) body
+    this.app.use(createProxyAuthMiddleware(this.authToken));
+
     // Parse JSON bodies
     this.app.use(express.json({ limit: '50mb' }));
 
@@ -110,8 +126,7 @@ export class AnthropicToGeminiProxy {
           geminiModel: this.defaultModel,
           messageCount: geminiReq.contents.length,
           stream: anthropicReq.stream,
-          apiKeyPresent: !!this.geminiApiKey,
-          apiKeyPrefix: this.geminiApiKey?.substring(0, 10)
+          apiKeyPresent: !!this.geminiApiKey
         });
 
         // Determine endpoint based on streaming
@@ -152,21 +167,12 @@ export class AnthropicToGeminiProxy {
             throw new Error('No response body');
           }
 
-          const decoder = new TextDecoder();
-          let chunkCount = 0;
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value);
-            chunkCount++;
-            logger.info('Gemini stream chunk received', { chunkCount, chunkLength: chunk.length, chunkPreview: chunk.substring(0, 200) });
-
-            const anthropicChunk = this.convertGeminiStreamToAnthropic(chunk);
-            logger.info('Anthropic stream chunk generated', { chunkCount, anthropicLength: anthropicChunk.length, anthropicPreview: anthropicChunk.substring(0, 200) });
-
-            res.write(anthropicChunk);
-          }
+          const chunkCount = await forEachSseLines(reader, lines => {
+            logger.debug('Gemini stream lines received', { length: lines.length, preview: lines.substring(0, 200) });
+            const anthropicChunk = this.convertGeminiStreamToAnthropic(lines);
+            logger.debug('Anthropic stream chunk generated', { anthropicLength: anthropicChunk.length, anthropicPreview: anthropicChunk.substring(0, 200) });
+            if (anthropicChunk) res.write(anthropicChunk);
+          });
 
           logger.info('Gemini stream complete', { totalChunks: chunkCount });
           res.end();
@@ -175,7 +181,7 @@ export class AnthropicToGeminiProxy {
           const geminiRes = await response.json();
 
           // DEBUG: Log raw Gemini response
-          logger.info('Raw Gemini API response', {
+          logger.debug('Raw Gemini API response', {
             hasResponse: !!geminiRes,
             hasCandidates: !!geminiRes.candidates,
             candidatesLength: geminiRes.candidates?.length,
@@ -433,14 +439,14 @@ The system will automatically execute these commands and provide results.
     for (const part of parts) {
       if (part.text) {
         rawText += part.text;
-        logger.info('Found text in part', { textLength: part.text.length, textPreview: part.text.substring(0, 100) });
+        logger.debug('Found text in part', { textLength: part.text.length, textPreview: part.text.substring(0, 100) });
       }
       if (part.functionCall) {
         functionCalls.push(part.functionCall);
       }
     }
 
-    logger.info('Extracted content from Gemini', {
+    logger.debug('Extracted content from Gemini', {
       rawTextLength: rawText.length,
       functionCallsCount: functionCalls.length,
       rawTextPreview: rawText.substring(0, 200)
@@ -498,9 +504,10 @@ The system will automatically execute these commands and provide results.
     };
   }
 
+  // Takes only complete lines; forEachSseLines buffers any partial tail.
   private convertGeminiStreamToAnthropic(chunk: string): string {
     // Gemini streaming returns Server-Sent Events format: "data: {json}"
-    const lines = chunk.split('\n').filter(line => line.trim());
+    const lines = sseLines(chunk);
     const anthropicChunks: string[] = [];
 
     for (const line of lines) {
@@ -546,17 +553,31 @@ The system will automatically execute these commands and provide results.
     return mapping[reason || 'STOP'] || 'end_turn';
   }
 
-  public start(port: number): void {
-    this.app.listen(port, () => {
+  /**
+   * Start listening. Binds 127.0.0.1 unless `host` or AGENTIC_FLOW_PROXY_HOST
+   * says otherwise. Returns the underlying server.
+   */
+  public start(port: number, host: string = resolveProxyHost()): Server {
+    this.server = this.app.listen(port, host, () => {
       logger.info('Anthropic to Gemini proxy started', {
         port,
+        host,
         geminiBaseUrl: this.geminiBaseUrl,
         defaultModel: this.defaultModel
       });
-      console.log(`\n✅ Gemini Proxy running at http://localhost:${port}`);
+      console.log(`\n✅ Gemini Proxy running at http://${host}:${port}`);
       console.log(`   Gemini Base URL: ${this.geminiBaseUrl}`);
       console.log(`   Default Model: ${this.defaultModel}\n`);
     });
+    return this.server;
+  }
+
+  /** Stop listening. Safe to call when the proxy was never started. */
+  public stop(): Promise<void> {
+    const server = this.server;
+    this.server = undefined;
+    if (!server) return Promise.resolve();
+    return new Promise((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));
   }
 }
 
@@ -577,4 +598,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 
   proxy.start(port);
+  console.log(`   Proxy token (send as x-api-key / ANTHROPIC_API_KEY): ${proxy.getAuthToken()}`);
 }

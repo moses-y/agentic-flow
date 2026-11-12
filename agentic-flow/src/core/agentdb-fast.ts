@@ -7,6 +7,23 @@
 
 import { AgentDB } from 'agentdb';
 import { EventEmitter } from 'events';
+import { getOnnxWasmEmbedder, ONNX_WASM_DIMENSION } from '../integrations/onnx-wasm-embedder.js';
+import { filteredVectorSearch, MAX_FALLBACK_K, type MetadataQuery } from './agentdb-filtered-search.js';
+
+/**
+ * Thrown by storeEpisode/storePattern on the rvf backend when a metadata
+ * field's type differs from its first stored type; nothing was written.
+ */
+export { RvfMetadataTypeConflictError } from 'agentdb/backends';
+
+/**
+ * How AgentDBFast embeds text:
+ * - 'auto' (default): all-MiniLM-L6-v2 via ruvector-onnx-embeddings-wasm when the
+ *   package and model are available and vectorDimensions is 384, else hash
+ * - 'onnx-wasm': same, but emit a 'warning' event when it is unavailable
+ * - 'hash': deterministic hash vectors (no semantics; fast, offline)
+ */
+export type FastEmbeddingMode = 'auto' | 'onnx-wasm' | 'hash';
 
 export interface Episode {
   id?: string;
@@ -57,9 +74,12 @@ export class AgentDBFast extends EventEmitter {
     enableHNSW: boolean;
     hnswM?: number;
     hnswEfConstruction?: number;
+    embeddings: FastEmbeddingMode;
   };
   private initialized: boolean = false;
   private embeddingCache: Map<string, number[]> = new Map();
+  private embeddingSource: 'onnx-wasm' | 'hash' | null = null;
+  private semanticEmbedder: Promise<{ embed(text: string): Promise<Float32Array> } | null> | null = null;
 
   constructor(config: {
     path?: string;
@@ -67,6 +87,7 @@ export class AgentDBFast extends EventEmitter {
     enableHNSW?: boolean;
     hnswM?: number;
     hnswEfConstruction?: number;
+    embeddings?: FastEmbeddingMode;
   } = {}) {
     super();
 
@@ -75,7 +96,8 @@ export class AgentDBFast extends EventEmitter {
       vectorDimensions: config.vectorDimensions || 384,
       enableHNSW: config.enableHNSW !== false,
       hnswM: config.hnswM || 16,
-      hnswEfConstruction: config.hnswEfConstruction || 200
+      hnswEfConstruction: config.hnswEfConstruction || 200,
+      embeddings: config.embeddings ?? (process.env.AGENTIC_FLOW_EMBEDDINGS === 'hash' ? 'hash' : 'auto'),
     };
   }
 
@@ -87,9 +109,9 @@ export class AgentDBFast extends EventEmitter {
 
     try {
       // Create AgentDB instance - use any for flexible config
+      // agentdb reads `vectorDimension` (singular); the index is in-memory.
       this.db = new AgentDB({
-        dimensions: this.config.vectorDimensions,
-        storagePath: this.config.path
+        vectorDimension: this.config.vectorDimensions,
       } as any);
 
       await this.db.initialize();
@@ -126,7 +148,7 @@ export class AgentDBFast extends EventEmitter {
       throw new Error('Backend not initialized');
     }
 
-    await this.backend.insert(
+    await this.insertVector(
       episodeId,
       new Float32Array(episode.embedding),
       {
@@ -154,27 +176,17 @@ export class AgentDBFast extends EventEmitter {
     const dimensions = this.config.vectorDimensions ?? 384;
     const queryEmbedding = options.task
       ? await this.getEmbedding(options.task)
-      : Array(dimensions).fill(0);
+      : Array(dimensions).fill(1 / Math.sqrt(dimensions)); // no task: any direction
 
     const k = options.k || 5;
 
-    // Build filter
-    const filter: Record<string, any> = { type: 'episode' };
-    if (options.sessionId) filter.sessionId = options.sessionId;
-    if (options.minReward !== undefined) filter.reward = { $gte: options.minReward };
-    if (options.maxReward !== undefined) {
-      filter.reward = { ...(filter.reward || {}), $lte: options.maxReward };
+    // Filter in agentdb (always by type, so patterns never come back as episodes)
+    const query: MetadataQuery = { equals: { type: 'episode' } };
+    if (options.sessionId) query.equals!.sessionId = options.sessionId;
+    if (options.minReward !== undefined || options.maxReward !== undefined) {
+      query.ranges = { reward: { min: options.minReward, max: options.maxReward } };
     }
-
-    if (!this.backend) {
-      throw new Error('Backend not initialized');
-    }
-
-    const results = await this.backend.search(
-      new Float32Array(queryEmbedding),
-      k,
-      { filter: Object.keys(filter).length > 1 ? filter : undefined }
-    );
+    const results = await this.search(queryEmbedding, k, query);
 
     return results.map((result: any) => ({
       id: result.id,
@@ -183,7 +195,7 @@ export class AgentDBFast extends EventEmitter {
       trajectory: JSON.parse(result.metadata.trajectory || '[]'),
       reward: result.metadata.reward,
       quality: result.metadata.quality,
-      embedding: result.vector,
+      embedding: result.vector, // agentdb search results carry no vector
       context: result.metadata.context,
       timestamp: result.metadata.timestamp
     }));
@@ -205,7 +217,7 @@ export class AgentDBFast extends EventEmitter {
       throw new Error('Backend not initialized');
     }
 
-    await this.backend.insert(
+    await this.insertVector(
       patternId,
       new Float32Array(pattern.embedding),
       {
@@ -235,20 +247,11 @@ export class AgentDBFast extends EventEmitter {
 
     const queryEmbedding = await this.getEmbedding(query);
 
-    const filter: Record<string, any> = { type: 'pattern' };
+    const filter: MetadataQuery = { equals: { type: 'pattern' } };
     if (minQuality !== undefined) {
-      filter.quality = { $gte: minQuality };
+      filter.ranges = { quality: { min: minQuality } };
     }
-
-    if (!this.backend) {
-      throw new Error('Backend not initialized');
-    }
-
-    const results = await this.backend.search(
-      new Float32Array(queryEmbedding),
-      k,
-      { filter: Object.keys(filter).length > 1 ? filter : undefined }
-    );
+    const results = await this.search(queryEmbedding, k, filter);
 
     return results.map((result: any) => ({
       id: result.id,
@@ -256,7 +259,7 @@ export class AgentDBFast extends EventEmitter {
       input: result.metadata.input,
       output: result.metadata.output,
       quality: result.metadata.quality,
-      embedding: result.vector,
+      embedding: result.vector, // agentdb search results carry no vector
       context: result.metadata.context,
       timestamp: result.metadata.timestamp
     }));
@@ -277,24 +280,26 @@ export class AgentDBFast extends EventEmitter {
       throw new Error('Backend not initialized');
     }
 
-    const stats = await this.backend.stats();
+    const stats = typeof this.backend.getStatsAsync === 'function'
+      ? await this.backend.getStatsAsync()
+      : this.backend.getStats();
+    const total: number = stats?.count ?? 0;
 
-    // Count by type - get all results
-    const allResults = await this.backend.search(
-      new Float32Array(this.config.vectorDimensions).fill(0),
-      10000, // Get all
-      {}
-    );
-
-    const episodes = allResults.filter((r: any) => r.metadata?.type === 'episode');
-    const patterns = allResults.filter((r: any) => r.metadata?.type === 'pattern');
+    // Count by type with agentdb's filtered search (exact on rvf). Any
+    // non-zero probe works; a zero vector has no cosine direction.
+    const probe = new Array(this.config.vectorDimensions).fill(1 / Math.sqrt(this.config.vectorDimensions));
+    const k = Math.min(Math.max(total, 1), MAX_FALLBACK_K);
+    const [episodes, patterns] = await Promise.all([
+      this.search(probe, k, { equals: { type: 'episode' } }, true),
+      this.search(probe, k, { equals: { type: 'pattern' } }, true),
+    ]);
 
     const avgQuality =
       patterns.reduce((sum: number, p: any) => sum + (p.metadata?.quality || 0), 0) /
       (patterns.length || 1);
 
     return {
-      totalVectors: stats.totalVectors || allResults.length || 0,
+      totalVectors: total,
       totalEpisodes: episodes.length,
       totalPatterns: patterns.length,
       avgQuality
@@ -309,6 +314,12 @@ export class AgentDBFast extends EventEmitter {
     this.embeddingCache.clear();
 
     if (this.db) {
+      // closeAsync (agentdb >= 3.7.0, rvf) flushes queued writes and waits for
+      // the writer lock to be released; AgentDB.close() does not wait.
+      if (typeof this.backend?.closeAsync === 'function') {
+        await this.backend.closeAsync();
+        (this.db as any).vectorBackend = null;
+      }
       await this.db.close();
       this.db = null;
       this.backend = null;
@@ -317,13 +328,27 @@ export class AgentDBFast extends EventEmitter {
     this.initialized = false;
   }
 
+  /** Which embedder produced vectors so far: 'onnx-wasm', 'hash', or null before the first. */
+  getEmbeddingSource(): 'onnx-wasm' | 'hash' | null {
+    return this.embeddingSource;
+  }
+
+  private getSemanticEmbedder() {
+    if (!this.semanticEmbedder) {
+      this.semanticEmbedder =
+        this.config.embeddings !== 'hash' && this.config.vectorDimensions === ONNX_WASM_DIMENSION
+          ? getOnnxWasmEmbedder()
+          : Promise.resolve(null);
+    }
+    return this.semanticEmbedder;
+  }
+
   /**
-   * Generate embedding for text (with caching)
+   * Generate embedding for text (with caching).
    *
-   * Note: This is a simple mock. In production, replace with:
-   * - OpenAI embeddings API
-   * - Local transformer model
-   * - SentenceTransformers
+   * Real all-MiniLM-L6-v2 vectors when ruvector-onnx-embeddings-wasm is
+   * available (see FastEmbeddingMode), deterministic hash vectors otherwise.
+   * The source is fixed by the first embedding so one store never mixes both.
    */
   private async getEmbedding(text: string): Promise<number[]> {
     // Check cache
@@ -331,8 +356,20 @@ export class AgentDBFast extends EventEmitter {
       return this.embeddingCache.get(text)!;
     }
 
-    // Simple hash-based embedding (REPLACE IN PRODUCTION)
-    const embedding = this.simpleHashEmbedding(text);
+    let embedding: number[] | null = null;
+    if (this.embeddingSource !== 'hash') {
+      const semantic = await this.getSemanticEmbedder();
+      if (semantic) {
+        embedding = Array.from(await semantic.embed(text));
+        this.embeddingSource = 'onnx-wasm';
+      } else if (this.config.embeddings === 'onnx-wasm') {
+        this.emit('warning', new Error('onnx-wasm embeddings requested but unavailable; using hash embeddings'));
+      }
+    }
+    if (!embedding) {
+      embedding = this.simpleHashEmbedding(text);
+      this.embeddingSource = 'hash';
+    }
 
     // Cache it
     this.embeddingCache.set(text, embedding);
@@ -348,12 +385,8 @@ export class AgentDBFast extends EventEmitter {
   }
 
   /**
-   * Simple hash-based embedding (MOCK - REPLACE IN PRODUCTION)
-   *
-   * Production alternatives:
-   * 1. OpenAI: https://platform.openai.com/docs/guides/embeddings
-   * 2. Transformers.js: https://huggingface.co/docs/transformers.js
-   * 3. SBERT: https://www.sbert.net/
+   * Deterministic hash-based embedding: the offline fallback. It carries no
+   * semantics (similar texts do not get similar vectors).
    */
   private simpleHashEmbedding(text: string): number[] {
     const embedding = new Array(this.config.vectorDimensions);
@@ -377,6 +410,28 @@ export class AgentDBFast extends EventEmitter {
     return embedding.map(v => v / norm);
   }
 
+  /** Write through the async API so an rvf type conflict rejects this call */
+  private async insertVector(id: string, embedding: Float32Array, metadata: Record<string, unknown>): Promise<void> {
+    if (!this.backend) {
+      throw new Error('Backend not initialized');
+    }
+    const clean = Object.fromEntries(Object.entries(metadata).filter(([, v]) => v !== undefined));
+    if (typeof this.backend.insertAsync === 'function') {
+      await this.backend.insertAsync(id, embedding, clean);
+    } else {
+      this.backend.insert(id, embedding, clean);
+    }
+  }
+
+  /** agentdb filtered search (see agentdb-filtered-search.ts for the fallback) */
+  private async search(embedding: number[], k: number, query: MetadataQuery, forceExact = false): Promise<any[]> {
+    if (!this.backend) {
+      throw new Error('Backend not initialized');
+    }
+    const { hits } = await filteredVectorSearch(this.backend, new Float32Array(embedding), k, query, { forceExact });
+    return hits;
+  }
+
   /**
    * Generate unique ID
    */
@@ -392,6 +447,7 @@ export function createFastAgentDB(config?: {
   path?: string;
   vectorDimensions?: number;
   enableHNSW?: boolean;
+  embeddings?: FastEmbeddingMode;
 }): AgentDBFast {
   return new AgentDBFast(config);
 }

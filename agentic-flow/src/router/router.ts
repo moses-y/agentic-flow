@@ -1,6 +1,4 @@
 // Multi-model router core implementation
-import { readFileSync, existsSync } from 'fs';
-import { homedir } from 'os';
 import { join } from 'path';
 import {
   LLMProvider,
@@ -10,46 +8,37 @@ import {
   StreamChunk,
   ProviderType,
   RouterMetrics,
-  ProviderError
+  ProviderError,
+  Message,
 } from './types.js';
+import { CostOptimalRouter } from './cost-optimal-router.js';
+import { loadRouterConfig } from './config-loader.js';
 import { OpenRouterProvider } from './providers/openrouter.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { ONNXLocalProvider } from './providers/onnx-local.js';
 import { GeminiProvider } from './providers/gemini.js';
+import { OllamaProvider } from './providers/ollama.js';
+import { PHI4_MODEL_PATH } from '../utils/model-downloader.js';
 
 export class ModelRouter {
   private config: RouterConfig;
   private providers: Map<ProviderType, LLMProvider> = new Map();
   private metrics: RouterMetrics;
+  // ADR-073: learned cost-optimal routing (opt-in via enableCostOptimalRouting).
+  private costOptimalRouter?: CostOptimalRouter;
+  private embedQuery?: (text: string) => Promise<number[]> | number[];
+  // Bounded LRU embedding cache — embedding dominates the cost-optimal hot path
+  // (≈ms) vs the µs-scale k-NN, and recurring prompts are common.
+  private embedCache = new Map<string, number[]>();
+  private static readonly EMBED_CACHE_MAX = 512;
 
   constructor(configPath?: string) {
-    this.config = this.loadConfig(configPath);
+    // Config comes only from an explicit path, AGENTIC_FLOW_ROUTER_CONFIG or
+    // ~/.agentic-flow (config-loader.ts): a repo's router.config*.json could
+    // point baseUrl at an attacker while substituting the real API key.
+    this.config = loadRouterConfig(configPath) ?? this.createConfigFromEnv();
     this.initializeProviders();
     this.metrics = this.initializeMetrics();
-  }
-
-  private loadConfig(configPath?: string): RouterConfig {
-    const paths = [
-      configPath,
-      process.env.AGENTIC_FLOW_ROUTER_CONFIG,
-      join(homedir(), '.agentic-flow', 'router.config.json'),
-      join(process.cwd(), 'router.config.json'),
-      join(process.cwd(), 'config', 'router.config.json'),
-      join(process.cwd(), 'router.config.example.json')
-    ].filter(Boolean) as string[];
-
-    for (const path of paths) {
-      if (existsSync(path)) {
-        const content = readFileSync(path, 'utf-8');
-        const config = JSON.parse(content);
-
-        // Substitute environment variables
-        return this.substituteEnvVars(config);
-      }
-    }
-
-    // If no config file found, create config from environment variables
-    return this.createConfigFromEnv();
   }
 
   private createConfigFromEnv(): RouterConfig {
@@ -58,14 +47,14 @@ export class ModelRouter {
       version: '1.0',
       defaultProvider: (process.env.PROVIDER as any) || 'anthropic',
       routing: { mode: 'manual' as const },
-      providers: {} as any
+      providers: {} as any,
     };
 
     // Add Anthropic if API key exists
     if (process.env.ANTHROPIC_API_KEY) {
       config.providers.anthropic = {
         apiKey: process.env.ANTHROPIC_API_KEY,
-        baseUrl: process.env.ANTHROPIC_BASE_URL
+        baseUrl: process.env.ANTHROPIC_BASE_URL,
       };
     }
 
@@ -73,48 +62,32 @@ export class ModelRouter {
     if (process.env.OPENROUTER_API_KEY) {
       config.providers.openrouter = {
         apiKey: process.env.OPENROUTER_API_KEY,
-        baseUrl: process.env.OPENROUTER_BASE_URL
+        baseUrl: process.env.OPENROUTER_BASE_URL,
       };
     }
 
     // Add Gemini if API key exists
     if (process.env.GOOGLE_GEMINI_API_KEY) {
       config.providers.gemini = {
-        apiKey: process.env.GOOGLE_GEMINI_API_KEY
+        apiKey: process.env.GOOGLE_GEMINI_API_KEY,
+      };
+    }
+
+    // Add Ollama if API key OR explicit base URL is set (self-hosted needs no key)
+    if (process.env.OLLAMA_API_KEY || process.env.OLLAMA_BASE_URL) {
+      config.providers.ollama = {
+        apiKey: process.env.OLLAMA_API_KEY,
+        baseUrl: process.env.OLLAMA_BASE_URL,
       };
     }
 
     // ONNX is always available (no API key needed)
     config.providers.onnx = {
       modelPath: process.env.ONNX_MODEL_PATH,
-      executionProviders: ['cpu']
+      executionProviders: ['cpu'],
     };
 
     return config as RouterConfig;
-  }
-
-  private substituteEnvVars(obj: any): any {
-    if (typeof obj === 'string') {
-      // Replace ${VAR_NAME} with environment variable value
-      return obj.replace(/\$\{([^}]+)\}/g, (_, key) => {
-        const [varName, defaultValue] = key.split(':-');
-        return process.env[varName] || defaultValue || '';
-      });
-    }
-
-    if (Array.isArray(obj)) {
-      return obj.map(item => this.substituteEnvVars(item));
-    }
-
-    if (obj && typeof obj === 'object') {
-      const result: any = {};
-      for (const [key, value] of Object.entries(obj)) {
-        result[key] = this.substituteEnvVars(value);
-      }
-      return result;
-    }
-
-    return obj;
   }
 
   private initializeProviders(): void {
@@ -146,10 +119,12 @@ export class ModelRouter {
     if (this.config.providers.onnx) {
       try {
         const provider = new ONNXLocalProvider({
-          modelPath: this.config.providers.onnx.modelPath || './models/phi-4/cpu_and_mobile/cpu-int4-rtn-block-32-acc-level-4/model.onnx',
+          modelPath:
+            this.config.providers.onnx.modelPath ||
+            PHI4_MODEL_PATH,
           executionProviders: this.config.providers.onnx.executionProviders || ['cpu'],
           maxTokens: this.config.providers.onnx.maxTokens || 100,
-          temperature: this.config.providers.onnx.temperature || 0.7
+          temperature: this.config.providers.onnx.temperature || 0.7,
         });
         this.providers.set('onnx', provider);
         if (verbose) console.log('✅ ONNX Local provider initialized');
@@ -169,8 +144,16 @@ export class ModelRouter {
       }
     }
 
-    // TODO: Initialize other providers (OpenAI, Ollama, LiteLLM)
-    // Will be implemented in Phase 1
+    // Initialize Ollama (OpenAI-compat, self-hosted or ollama.com Cloud)
+    if (this.config.providers.ollama) {
+      try {
+        const provider = new OllamaProvider(this.config.providers.ollama);
+        this.providers.set('ollama', provider);
+        if (verbose) console.log('✅ Ollama provider initialized');
+      } catch (error) {
+        if (verbose) console.error('❌ Failed to initialize Ollama:', error);
+      }
+    }
   }
 
   private initializeMetrics(): RouterMetrics {
@@ -179,16 +162,16 @@ export class ModelRouter {
       totalCost: 0,
       totalTokens: { input: 0, output: 0 },
       providerBreakdown: {},
-      agentBreakdown: {}
+      agentBreakdown: {},
     };
   }
 
   async chat(params: ChatParams, agentType?: string): Promise<ChatResponse> {
     const startTime = Date.now();
-    const provider = await this.selectProvider(params, agentType);
+    const { provider, params: routed } = await this.selectProvider(params, agentType);
 
     try {
-      const response = await provider.chat(params);
+      const response = await provider.chat(routed);
 
       // Update metrics
       this.updateMetrics(provider.name, response, Date.now() - startTime, agentType);
@@ -197,59 +180,139 @@ export class ModelRouter {
       response.metadata = {
         ...response.metadata,
         provider: provider.name,
-        latency: Date.now() - startTime
+        latency: Date.now() - startTime,
       };
 
       return response;
     } catch (error) {
-      return this.handleProviderError(error as ProviderError, params, agentType);
+      return this.handleProviderError(error as ProviderError, routed, agentType);
     }
   }
 
+  /**
+   * Stream a completion. Metrics are recorded once the stream completes. If
+   * the selected provider fails before yielding anything, the fallback chain
+   * is tried; once chunks have been yielded, an error is rethrown because the
+   * caller has already consumed part of the response.
+   */
   async *stream(params: ChatParams, agentType?: string): AsyncGenerator<StreamChunk> {
-    const provider = await this.selectProvider(params, agentType);
+    const startTime = Date.now();
+    const { provider, params: routed } = await this.selectProvider(params, agentType);
 
     if (!provider.stream) {
       throw new Error(`Provider ${provider.name} does not support streaming`);
     }
 
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    let yielded = false;
     try {
-      const iterator = provider.stream(params);
-      for await (const chunk of iterator) {
+      for await (const chunk of provider.stream(routed)) {
+        ModelRouter.collectStreamUsage(chunk, usage);
+        yielded = true;
         yield chunk;
       }
     } catch (error) {
-      throw error;
+      if (yielded) throw error;
+      yield* this.streamFallback(error as ProviderError, provider, routed, agentType, startTime);
+      return;
     }
+
+    this.updateMetrics(provider.name, { usage } as ChatResponse, Date.now() - startTime, agentType);
   }
 
-  private async selectProvider(params: ChatParams, agentType?: string): Promise<LLMProvider> {
+  private async *streamFallback(
+    error: ProviderError,
+    failed: LLMProvider,
+    params: ChatParams,
+    agentType: string | undefined,
+    startTime: number
+  ): AsyncGenerator<StreamChunk> {
+    console.error(`❌ Provider error from ${error.provider ?? failed.name}:`, error.message);
+
+    for (const providerType of this.config.fallbackChain || []) {
+      const provider = this.providers.get(providerType);
+      if (!provider || provider === failed || providerType === error.provider || !provider.stream) {
+        continue;
+      }
+
+      console.log(`🔄 Falling back to ${provider.name}`);
+      const usage = { inputTokens: 0, outputTokens: 0 };
+      let yielded = false;
+      try {
+        for await (const chunk of provider.stream(params)) {
+          ModelRouter.collectStreamUsage(chunk, usage);
+          yielded = true;
+          yield chunk;
+        }
+      } catch (fallbackError) {
+        if (yielded) throw fallbackError;
+        console.error(`❌ Fallback provider ${provider.name} also failed`);
+        continue;
+      }
+
+      this.updateMetrics(provider.name, { usage } as ChatResponse, Date.now() - startTime, agentType);
+      return;
+    }
+
+    throw error; // No fallback succeeded
+  }
+
+  /**
+   * Token counts from a stream chunk. Providers report them as camelCase
+   * `usage` (OpenRouter, Ollama) or as Anthropic's snake_case event fields;
+   * counts are cumulative, so the largest seen wins.
+   */
+  private static collectStreamUsage(
+    chunk: any,
+    usage: { inputTokens: number; outputTokens: number }
+  ): void {
+    const reported = chunk?.usage ?? chunk?.message?.usage;
+    if (!reported) return;
+    const input = reported.inputTokens ?? reported.input_tokens;
+    const output = reported.outputTokens ?? reported.output_tokens;
+    if (typeof input === 'number') usage.inputTokens = Math.max(usage.inputTokens, input);
+    if (typeof output === 'number') usage.outputTokens = Math.max(usage.outputTokens, output);
+  }
+
+  /**
+   * Pick the provider for a request. Returns the params to send, which are a
+   * copy when routing steers the model; the caller's params are never mutated.
+   */
+  private async selectProvider(
+    params: ChatParams,
+    agentType?: string
+  ): Promise<{ provider: LLMProvider; params: ChatParams }> {
     // If provider is explicitly specified in params, use it
     if (params.provider) {
       const forcedProvider = this.providers.get(params.provider as ProviderType);
       if (forcedProvider) {
-        return forcedProvider;
+        return { provider: forcedProvider, params };
       }
-      console.warn(`⚠️  Requested provider '${params.provider}' not available, falling back to routing logic`);
+      console.warn(
+        `⚠️  Requested provider '${params.provider}' not available, falling back to routing logic`
+      );
     }
 
     const routingMode = this.config.routing?.mode || 'manual';
 
     switch (routingMode) {
       case 'manual':
-        return this.getDefaultProvider();
+        return { provider: this.getDefaultProvider(), params };
 
       case 'rule-based':
-        return this.selectByRules(params, agentType);
+        return { provider: this.selectByRules(params, agentType), params };
 
       case 'cost-optimized':
-        return this.selectByCost(params);
+        return { provider: this.selectByCost(params), params };
+
+      case 'cost-optimal':
+        return this.selectByCostOptimal(params);
 
       case 'performance-optimized':
-        return this.selectByPerformance(params);
+        return { provider: this.selectByPerformance(params), params };
 
       default:
-        return this.getDefaultProvider();
+        return { provider: this.getDefaultProvider(), params };
     }
   }
 
@@ -309,6 +372,90 @@ export class ModelRouter {
     }
 
     return this.getDefaultProvider();
+  }
+
+  /**
+   * Enable learned cost-optimal routing (ADR-073). Attaches a
+   * {@link CostOptimalRouter} plus an embedder and switches the routing mode to
+   * `'cost-optimal'`. Opt-in: until called, routing behaves exactly as before.
+   */
+  enableCostOptimalRouting(opts: {
+    router: CostOptimalRouter;
+    embed: (text: string) => Promise<number[]> | number[];
+  }): void {
+    this.costOptimalRouter = opts.router;
+    this.embedQuery = opts.embed;
+    this.config.routing = { ...(this.config.routing ?? { mode: 'cost-optimal' }), mode: 'cost-optimal' };
+  }
+
+  /**
+   * Embed `text`, caching the result. Bounded LRU: a cache hit refreshes
+   * recency; the oldest entry is evicted past {@link EMBED_CACHE_MAX}.
+   */
+  private async embedCached(text: string): Promise<number[]> {
+    const hit = this.embedCache.get(text);
+    if (hit) {
+      this.embedCache.delete(text); // move to most-recently-used
+      this.embedCache.set(text, hit);
+      return hit;
+    }
+    const embedding = await this.embedQuery!(text);
+    this.embedCache.set(text, embedding);
+    if (this.embedCache.size > ModelRouter.EMBED_CACHE_MAX) {
+      const oldest = this.embedCache.keys().next().value;
+      if (oldest !== undefined) this.embedCache.delete(oldest);
+    }
+    return embedding;
+  }
+
+  /** Extract the most recent user-message text to embed for routing. */
+  private lastUserText(messages: Message[]): string {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== 'user') continue;
+      return typeof m.content === 'string'
+        ? m.content
+        : m.content.map((b) => b.text ?? '').join(' ');
+    }
+    // No user turn — fall back to all text content.
+    return messages
+      .map((m) => (typeof m.content === 'string' ? m.content : ''))
+      .join(' ')
+      .trim();
+  }
+
+  /**
+   * Learned cost-optimal selection (ADR-073): embed the query, route to the
+   * cheapest model predicted to clear the quality bar, and return the matching
+   * provider with a copy of params whose model is the routed one. Falls back to the {@link selectByCost}
+   * heuristic when the learned router/embedder isn't configured or errors —
+   * routing never hard-fails on the cost-optimal path.
+   */
+  private async selectByCostOptimal(
+    params: ChatParams
+  ): Promise<{ provider: LLMProvider; params: ChatParams }> {
+    if (this.costOptimalRouter && this.embedQuery) {
+      try {
+        const text = this.lastUserText(params.messages);
+        const embedding = await this.embedCached(text);
+        const decision = this.costOptimalRouter.route(embedding);
+        const provider = this.providers.get(decision.provider);
+        if (provider) {
+          console.log(
+            `💡 Cost-optimal routing → ${decision.id} ` +
+              `(q̂=${decision.predictedQuality.toFixed(2)}, $${decision.costPerMTok}/Mtok, metBar=${decision.metBar})`,
+          );
+          // Steer the model, not just the provider, without mutating the caller's params.
+          return { provider, params: { ...params, model: decision.model } };
+        }
+        console.warn(
+          `⚠️  Cost-optimal pick '${decision.provider}' not initialized; falling back to heuristic`,
+        );
+      } catch (err) {
+        console.warn('⚠️  Cost-optimal routing failed; falling back to heuristic', err);
+      }
+    }
+    return { provider: this.selectByCost(params), params };
   }
 
   private selectByPerformance(params: ChatParams): LLMProvider {
@@ -383,14 +530,15 @@ export class ModelRouter {
         requests: 0,
         cost: 0,
         avgLatency: 0,
-        errors: 0
+        errors: 0,
       };
     }
 
     const breakdown = this.metrics.providerBreakdown[providerName];
     breakdown.requests++;
     breakdown.cost += response.metadata?.cost || 0;
-    breakdown.avgLatency = (breakdown.avgLatency * (breakdown.requests - 1) + latency) / breakdown.requests;
+    breakdown.avgLatency =
+      (breakdown.avgLatency * (breakdown.requests - 1) + latency) / breakdown.requests;
 
     // Agent breakdown
     if (agentType) {

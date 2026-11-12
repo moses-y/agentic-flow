@@ -6,7 +6,7 @@
  * NOW WITH FULL RUVECTOR INTELLIGENCE:
  * - @ruvector/sona: Micro-LoRA (~0.05ms), EWC++, Trajectory tracking
  * - @ruvector/attention: MoE, Flash, Hyperbolic, Graph attention
- * - ruvector core: HNSW indexing (150x faster)
+ * - Agent/pattern search: exact cosine scan (HNSW is disabled; agent sets are small)
  *
  * Available as BOTH:
  * 1. CLI Commands (agentic-flow hooks ...)
@@ -14,6 +14,7 @@
  */
 
 import { Command } from 'commander';
+import { packageSpec } from '../../utils/package-version.js';
 import * as path from 'path';
 
 // Import hook tools
@@ -550,8 +551,11 @@ function readJson(file) {
 }
 
 function querySqlite(db, sql) {
+  // Pass db path and sql as separate arguments to avoid shell injection
   try {
-    return execSync(\`sqlite3 "\${db}" "\${sql}"\`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 1000 }).trim();
+    const { spawnSync } = require('child_process');
+    const result = spawnSync('sqlite3', [db, sql], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 1000 });
+    return result.stdout ? result.stdout.trim() : null;
   } catch { return null; }
 }
 
@@ -642,6 +646,9 @@ console.log(lines.join('\\n'));
           console.log(`   📊 Created: ${statuslinePath}`);
         }
 
+        // Hooks run exactly this release, never a dist-tag
+        const spec = packageSpec();
+
         // Create settings with full capabilities
         const settings = {
           env: {
@@ -658,7 +665,7 @@ console.log(lines.join('\\n'));
                 hooks: [
                   {
                     type: 'command',
-                    command: 'npx agentic-flow hooks pre-edit "$TOOL_INPUT_file_path"'
+                    command: `npx ${spec} hooks pre-edit "$TOOL_INPUT_file_path"`
                   }
                 ]
               },
@@ -667,7 +674,7 @@ console.log(lines.join('\\n'));
                 hooks: [
                   {
                     type: 'command',
-                    command: 'npx agentic-flow hooks pre-command "$TOOL_INPUT_command"'
+                    command: `npx ${spec} hooks pre-command "$TOOL_INPUT_command"`
                   }
                 ]
               }
@@ -678,7 +685,7 @@ console.log(lines.join('\\n'));
                 hooks: [
                   {
                     type: 'command',
-                    command: 'npx agentic-flow hooks post-edit "$TOOL_INPUT_file_path" --success'
+                    command: `npx ${spec} hooks post-edit "$TOOL_INPUT_file_path" --success`
                   }
                 ]
               }
@@ -689,7 +696,7 @@ console.log(lines.join('\\n'));
                 hooks: [
                   {
                     type: 'command',
-                    command: 'npx agentic-flow hooks post-edit "$TOOL_INPUT_file_path" --fail --error "$ERROR_MESSAGE"'
+                    command: `npx ${spec} hooks post-edit "$TOOL_INPUT_file_path" --fail --error "$ERROR_MESSAGE"`
                   }
                 ]
               }
@@ -699,7 +706,7 @@ console.log(lines.join('\\n'));
                 hooks: [
                   {
                     type: 'command',
-                    command: 'npx agentic-flow hooks intelligence stats'
+                    command: `npx ${spec} hooks intelligence stats`
                   }
                 ]
               },
@@ -707,7 +714,7 @@ console.log(lines.join('\\n'));
                 hooks: [
                   {
                     type: 'command',
-                    command: 'npx agentic-flow workers status --active --json 2>/dev/null || true'
+                    command: `npx ${spec} workers status --active --json 2>/dev/null || true`
                   }
                 ]
               }
@@ -717,7 +724,7 @@ console.log(lines.join('\\n'));
                 hooks: [
                   {
                     type: 'command',
-                    command: 'npx agentic-flow workers cleanup --age 24 2>/dev/null || true'
+                    command: `npx ${spec} workers cleanup --age 24 2>/dev/null || true`
                   }
                 ]
               }
@@ -728,7 +735,7 @@ console.log(lines.join('\\n'));
                   {
                     type: 'command',
                     timeout: 2000,
-                    command: 'npx agentic-flow hooks intelligence stats'
+                    command: `npx ${spec} hooks intelligence stats`
                   }
                 ]
               },
@@ -738,20 +745,17 @@ console.log(lines.join('\\n'));
                     type: 'command',
                     timeout: 5000,
                     background: true,
-                    command: 'npx agentic-flow workers dispatch-prompt "$USER_PROMPT" --session "$SESSION_ID" --json 2>/dev/null || true'
+                    command: `npx ${spec} workers dispatch-prompt "$USER_PROMPT" --session "$SESSION_ID" --json 2>/dev/null || true`
                   }
                 ]
               }
             ]
           },
+          // Same rule as init: no npx/npm or whole MCP servers, which would
+          // let any package or tool run without a prompt.
           permissions: {
             allow: [
-              'Bash(npx:*)',
-              'Bash(agentic-flow:*)',
-              'Bash(npm run:*)',
-              'mcp__agentic-flow',
-              'mcp__claude-flow',
-              'mcp__ruv-swarm'
+              'Bash(agentic-flow:*)'
             ]
           },
           statusLine: options.statusline !== false ? {
@@ -764,8 +768,8 @@ console.log(lines.join('\\n'));
         console.log('✅ Hooks initialized!');
         console.log(`   📁 Created: ${settingsPath}`);
         console.log('\n💡 Next steps:');
-        console.log('   1. Run: npx agentic-flow hooks pretrain');
-        console.log('   2. Run: npx agentic-flow hooks build-agents');
+        console.log(`   1. Run: npx ${spec} hooks pretrain`);
+        console.log(`   2. Run: npx ${spec} hooks build-agents`);
         console.log('   3. Start using Claude Code with intelligent routing!');
         process.exit(0);
       } catch (error) {
@@ -782,12 +786,12 @@ console.log(lines.join('\\n'));
   // Create intelligence subcommand group
   const intelligence = new Command('intelligence')
     .alias('intel')
-    .description('RuVector intelligence: SONA Micro-LoRA (~0.05ms) + MoE attention + HNSW (150x faster)');
+    .description('RuVector intelligence: SONA Micro-LoRA + MoE attention + cosine agent matching');
 
   // Intelligence route command
   intelligence
     .command('route <task>')
-    .description('Route task using SONA + MoE + HNSW (150x faster than brute force)')
+    .description('Route task using SONA + MoE attention + cosine agent matching')
     .option('-f, --file <path>', 'File context')
     .option('-e, --error <context>', 'Error context for debugging')
     .option('-k, --top-k <n>', 'Number of candidates', parseInt, 5)
@@ -974,7 +978,7 @@ console.log(lines.join('\\n'));
           console.log(`\n💾 Pattern Stored`);
           console.log(`   Task: ${options.task.slice(0, 50)}...`);
           console.log(`   Score: ${((options.score || 0.9) * 100).toFixed(0)}%`);
-          console.log(`   Index: HNSW (150x faster retrieval)`);
+          console.log(`   Index: in-memory cosine scan`);
         }
         process.exit(0);
       } catch (error) {
@@ -986,7 +990,7 @@ console.log(lines.join('\\n'));
   // Pattern search command
   intelligence
     .command('pattern-search <query>')
-    .description('Search ReasoningBank using HNSW (150x faster)')
+    .description('Search ReasoningBank by cosine similarity')
     .option('-k, --top-k <n>', 'Number of results', parseInt, 5)
     .option('-m, --min-reward <n>', 'Minimum reward filter', parseFloat)
     .option('-j, --json', 'Output as JSON')
@@ -1044,8 +1048,8 @@ console.log(lines.join('\\n'));
           console.log(`   Experts: ${result.features?.attention?.experts || 4}`);
           console.log(`   Top-K: ${result.features?.attention?.topK || 2}`);
           console.log(`\n🔍 HNSW:`);
-          console.log(`   Enabled: ${result.features?.hnsw?.enabled ?? true}`);
-          console.log(`   Speedup: ${result.features?.hnsw?.speedup || '150x vs brute-force'}`);
+          console.log(`   Enabled: ${result.features?.hnsw?.enabled ?? false}`);
+          console.log(`   Search: ${result.features?.hnsw?.search || 'exact cosine scan'}`);
           console.log(`\n📈 Learning:`);
           console.log(`   Trajectories: ${result.persistence?.trajectories ?? result.stats?.trajectoryCount ?? 0}`);
           console.log(`   Active: ${result.stats?.activeTrajectories || 0}`);
